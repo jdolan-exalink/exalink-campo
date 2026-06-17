@@ -1,0 +1,155 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: exalink_postgres
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      POSTGRES_USER: ${POSTGRES_USER:-exalink}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exalink_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-exalink_campo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init.sql
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exalink}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: exalink_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: exalink_mosquitto
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    ports:
+      - "11883:1883"
+      - "19001:9001"
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exalink_backend
+    env_file: .env
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-exalink}:${POSTGRES_PASSWORD:-exalink_pass}@postgres:5432/${POSTGRES_DB:-exalink_campo}
+      DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-exalink}:${POSTGRES_PASSWORD:-exalink_pass}@postgres:5432/${POSTGRES_DB:-exalink_campo}
+      REDIS_URL: redis://redis:6379/0
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      LORA_DB_PATH: /app/lora_db/lora.db
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+    ports:
+      - "8088:8000"
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - lora_data:/app/lora_db
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  lora-listener:
+    build:
+      context: ./ESP32/AP/server
+      dockerfile: Dockerfile
+    container_name: exalink_lora_listener
+    ports:
+      - "${LORA_LISTEN_PORT:-6666}:6666"
+    environment:
+      TZ: America/Argentina/Buenos_Aires
+      LORA_LISTEN_PORT: ${LORA_LISTEN_PORT:-6666}
+      LORA_AUTH_PASSWORD: ${LORA_AUTH_PASSWORD:-abc1234}
+      LORA_MAX_PACKETS: ${LORA_MAX_PACKETS:-500}
+      LORA_DB_PATH: /app/DB/lora.db
+    volumes:
+      - lora_data:/app/DB
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: exalink_frontend
+    ports:
+      - "3333:80"
+    depends_on:
+      - backend
+    networks:
+      - exalink_net
+    restart: unless-stopped
+
+  tileserver:
+    image: maptiler/tileserver-gl:latest
+    container_name: exalink_tileserver
+    volumes:
+      - ./tiles:/data
+    ports:
+      - "8081:8080"
+    networks:
+      - exalink_net
+    restart: unless-stopped
+    profiles:
+      - tiles
+
+  martin:
+    image: ghcr.io/maplibre/martin:v0.13.0
+    container_name: exalink_martin
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-exalink}:${POSTGRES_PASSWORD:-exalink_pass}@postgres:5432/${POSTGRES_DB:-exalink_campo}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    networks:
+      - exalink_net
+    restart: unless-stopped
+    profiles:
+      - tiles
+
+volumes:
+  postgres_data:
+  redis_data:
+  mosquitto_data:
+  mosquitto_log:
+  lora_data:
+
+networks:
+  exalink_net:
+    driver: bridge

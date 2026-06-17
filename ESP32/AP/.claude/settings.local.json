@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Read(//dev/**)",
+      "Bash(pip3 --version)",
+      "WebFetch(domain:wiki.heltec.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import json,sys; t=json.load\\(sys.stdin\\); [print\\(x['path']\\) for x in t.get\\('tree',[]\\) if 'tracker' in x['path'].lower\\(\\) or 'wireless' in x['path'].lower\\(\\)]\")",
+      "Bash(python3 -c \"import json,sys; [print\\(x['name'],x['download_url']\\) for x in json.load\\(sys.stdin\\)]\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pio run *)",
+      "Bash(sudo pio run -t upload)",
+      "Bash(xargs ls -la)",
+      "Bash(fuser /dev/ttyACM0)",
+      "Bash(ps *)",
+      "WebFetch(domain:learn.adafruit.com)",
+      "WebFetch(domain:community.home-assistant.io)",
+      "WebFetch(domain:esphome.io)",
+      "WebFetch(domain:community.heltec.cn)",
+      "WebFetch(domain:docs.cirkitdesigner.com)",
+      "WebFetch(domain:docs.heltec.org)",
+      "Bash(curl -s https://api.github.com/repos/kevingraehl/HeltecTrackerDisplay/contents/src)",
+      "Bash(curl -s \"https://api.github.com/search/repositories?q=HeltecTrackerDisplay\")",
+      "Bash(curl -s \"https://api.github.com/repos/kevingraehl/HeltecTrackerDisplay/git/trees/main?recursive=1\")",
+      "Bash(curl *)",
+      "Read(//tmp/**)",
+      "Bash(unzip -l /tmp/check.zip)",
+      "Bash(pkill -f \"pio device monitor\")",
+      "Bash(pio device *)",
+      "Bash(timeout 25 minicom -D /dev/ttyACM0 -b 115200 --noinit --nometakey)",
+      "Bash(timeout 25 cat /dev/ttyACM0)",
+      "Bash(timeout 20 cat /dev/ttyACM0)",
+      "Bash(stty -F /dev/ttyACM0 115200 raw)",
+      "Bash(sqlite3 *)",
+      "Bash(docker exec exalink_lora_listener *)"
+    ]
+  }
+}

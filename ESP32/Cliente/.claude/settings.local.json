@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio run *)",
+      "Bash(timeout 20 pio device monitor --filter=time)",
+      "Read(//dev/**)",
+      "Bash(stty -F /dev/ttyACM0 115200)",
+      "Bash(lsusb)",
+      "Bash(~/.platformio/penv/bin/python --version)",
+      "Bash(pip show *)",
+      "Bash(python -c \"import serial; print\\(serial.__version__\\)\")",
+      "Bash(pio system *)",
+      "Bash(pio --version)",
+      "Bash(pip index *)",
+      "Bash(pio device *)",
+      "Bash(kill %1)",
+      "Bash(wait)",
+      "Bash(timeout 6 cat /dev/ttyACM0)",
+      "Bash(timeout 15 cat /dev/ttyACM0)",
+      "Bash(timeout 20 cat /dev/ttyACM0)",
+      "WebFetch(domain:heltec.org)",
+      "Bash(timeout 12 cat /dev/ttyACM0)",
+      "Bash(timeout 8 cat /dev/ttyACM0)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:resource.heltec.cn)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.heltec.org)",
+      "Bash(gh api *)",
+      "Bash(python -c \"import sys,json; [print\\(x['name']\\) for x in json.load\\(sys.stdin\\)]\")"
+    ]
+  }
+}

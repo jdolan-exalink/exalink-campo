@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exalink-campo-backend"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.10",
+    "geoalchemy2>=0.15.2",
+    "shapely>=2.0.6",
+    "alembic>=1.14.0",
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.0.0",
+    "python-multipart>=0.0.18",
+    "pydantic[email]>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "redis[asyncio]>=5.2.0",
+    "aiomqtt>=2.3.0",
+    "openpyxl>=3.1.5",
+    "pandas>=2.2.3",
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.1",
+    "orjson>=3.10.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+*.egg
+.env
+venv/
+.venv/
+
+# Node / React
+node_modules/
+frontend/dist/
+frontend/build/
+
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data
+DB/*.db
+lora_data/
+*.sqlite3
+
+# Docker volumes
+postgres_data/
+redis_data/
+mosquitto_data/
+mosquitto_log/
+
+# Secrets / env
+.env*
+!.env.example
+
+# ESP32 build artifacts
+ESP32/**/build/
+ESP32/**/.pio/
+*.bin
+*.elf
