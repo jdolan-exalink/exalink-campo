@@ -40,14 +40,28 @@ button:active{opacity:.8}
 .btn-p{background:#1a56db;color:#fff}
 .btn-s{background:#6b7280;color:#fff}
 .btn-d{background:#dc2626;color:#fff}
+.btn-o{background:#d97706;color:#fff}
 #scan-wrap{margin-top:10px}
+#portal-wrap{display:none}
+#login-err{color:#dc2626;font-size:.82em;margin-top:8px;display:none}
 </style>
 </head>
 <body>
 <h1>&#128225; Exalink Gateway</h1>
 
+<div class="card" id="login-card">
+  <h2>Iniciar Sesi&oacute;n</h2>
+  <label>Usuario</label>
+  <input type="text" id="login_user" placeholder="admin" autocomplete="username">
+  <label>Contrase&ntilde;a</label>
+  <input type="password" id="login_pass" placeholder="Contrase&ntilde;a" autocomplete="current-password">
+  <p id="login-err"></p>
+  <button class="btn-p" onclick="doLogin()">Ingresar</button>
+</div>
+
+<div id="portal-wrap">
 <div class="card">
-  <h2>Estado</h2>
+  <h2>Estado &nbsp;<button class="btn-o" onclick="doLogout()" style="display:inline;width:auto;padding:4px 12px;font-size:.75em;margin:0;float:right">Salir</button></h2>
   <div id="status">Cargando&hellip;</div>
 </div>
 
@@ -60,7 +74,7 @@ button:active{opacity:.8}
   <label>Contrase&ntilde;a</label>
   <div style="position:relative">
     <input type="password" id="pass" placeholder="Contrase&ntilde;a WiFi" style="padding-right:42px">
-    <span id="eye" onclick="togglePass()" title="Mostrar/ocultar"
+    <span onclick="togglePass()" title="Mostrar/ocultar"
       style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
              cursor:pointer;font-size:1.2em;user-select:none;line-height:1">&#128065;</span>
   </div>
@@ -114,6 +128,9 @@ button:active{opacity:.8}
   <input type="number" id="listen_port" min="1" max="65535" placeholder="6666">
   <label>Intervalo de sync con servidor (minutos)</label>
   <input type="number" id="sync_interval" min="1" max="1440" placeholder="1">
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0 8px">
+  <label style="color:#d97706">Cambiar Contrase&ntilde;a Admin</label>
+  <input type="password" id="admin_pass" placeholder="Nueva contrase&ntilde;a (dejar vac&iacute;o para no cambiar)" autocomplete="new-password">
   <button class="btn-p" onclick="save()">&#10003;&nbsp;Guardar y Reiniciar</button>
 </div>
 
@@ -123,12 +140,53 @@ button:active{opacity:.8}
     Borra toda la configuraci&oacute;n guardada y vuelve a valores de f&aacute;brica.</p>
   <button class="btn-d" onclick="rst()">&#9888;&nbsp;Resetear Configuraci&oacute;n</button>
 </div>
+</div>
 
 <script>
-var gwData={};
+var token='';
+function api(url,opts){
+  opts=opts||{};
+  opts.headers=opts.headers||{};
+  if(token)opts.headers['Authorization']='Bearer '+token;
+  return fetch(url,opts);
+}
+function getToken(){return localStorage.getItem('gw_token')||'';}
+function setToken(t){token=t;localStorage.setItem('gw_token',t);}
+function clearToken(){token='';localStorage.removeItem('gw_token');}
+
+async function doLogin(){
+  var u=document.getElementById('login_user').value.trim()||'admin';
+  var p=document.getElementById('login_pass').value;
+  var err=document.getElementById('login-err');
+  err.style.display='none';
+  try{
+    var r=await fetch('/login',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user:u,pass:p})});
+    var d=await r.json();
+    if(d.ok&&d.token){
+      setToken(d.token);
+      document.getElementById('login-card').style.display='none';
+      document.getElementById('portal-wrap').style.display='block';
+      fetchStatus();
+    }else{
+      err.textContent=d.msg||'Credenciales incorrectas';
+      err.style.display='block';
+    }
+  }catch(e){
+    err.textContent='Error de conexi\u00f3n';
+    err.style.display='block';
+  }
+}
+async function doLogout(){
+  try{await api('/logout',{method:'POST'});}catch(e){}
+  clearToken();
+  document.getElementById('login-card').style.display='block';
+  document.getElementById('portal-wrap').style.display='none';
+}
 function srvBadge(d){
   if(!d.server_tested)return '<span style="color:#9ca3af">No verificado</span>';
-  if(!d.server_ok)return '<span class="err">&#10007; Error de conexi&oacute;n</span>';
+  if(!d.server_ok)return '<span class="err">&#10007; Error de conexi\u00f3n</span>';
   var lat=(d.sync_latency_ms>=0)?' <span style="color:#9ca3af;font-size:.85em">('+d.sync_latency_ms+'ms)</span>':'';
   return '<span class="ok">&#10003; Conectado</span>'+lat;
 }
@@ -139,7 +197,7 @@ async function testSrv(){
   st.innerHTML='<span style="color:#9ca3af">Probando&hellip;</span>';
   try{
     var url=document.getElementById('server').value.trim();
-    var r=await fetch('/test-server?url='+encodeURIComponent(url));
+    var r=await api('/test-server?url='+encodeURIComponent(url));
     var d=await r.json();
     if(d.ok){
       st.innerHTML='<span class="ok">&#10003; Conectado</span>&nbsp;<span style="color:#9ca3af;font-size:.85em">'+esc(d.url)+'</span>';
@@ -153,12 +211,14 @@ async function testSrv(){
   fetchStatus();
 }
 async function fetchStatus(){
+  var curSrv=document.getElementById('server').value;
   try{
-    var d=await(await fetch('/status')).json();
-    gwData=d;
+    var r=await api('/status');
+    if(r.status==401){clearToken();location.reload();return;}
+    var d=await r.json();
     var wf=d.wifi_ok
       ?'<span class="ok">'+d.wifi_ssid+'&nbsp;&mdash;&nbsp;'+d.ip+'</span>'
-      :'<span class="err">Sin conexi&oacute;n</span>';
+      :'<span class="err">Sin conexi\u00f3n</span>';
     document.getElementById('status').innerHTML=
       '<div class="row"><span class="lbl">Gateway ID</span><strong>'+d.gw_id+'</strong></div>'+
       '<div class="row"><span class="lbl">WiFi</span>'+wf+'</div>'+
@@ -168,7 +228,7 @@ async function fetchStatus(){
       '<div class="row"><span class="lbl">HTTPS Listener</span><span class="ok">Puerto '+d.listen_port+'</span></div>'+
       '<div class="row"><span class="lbl">LoRaWAN Server</span>'+srvBadge(d)+'</div>';
     document.getElementById('gw_id').value=d.gw_id;
-    document.getElementById('server').value=d.server;
+    document.getElementById('server').value=curSrv||d.server;
     var sSt=document.getElementById('srv-st');
     if(sSt)sSt.innerHTML=srvBadge(d)+'&nbsp;<span style="color:#9ca3af;font-size:.9em">'+
       (d.server_tested?'':'(no verificado)')+'</span>';
@@ -215,22 +275,22 @@ function toggleLPass(){
 async function applyWifi(){
   var s=document.getElementById('ssid').value.trim();
   if(!s){alert('Ingresa un SSID.');return;}
-  if(!confirm('Aplicar WiFi: "'+s+'"\n\nSi falla la conexión el gateway volverá automáticamente a la red anterior.'))return;
+  if(!confirm('Aplicar WiFi: "'+s+'"\n\nSi falla la conexion el gateway volvera automaticamente a la red anterior.'))return;
   try{
-    var r=await fetch('/wifi-apply',{method:'POST',
+    var r=await api('/wifi-apply',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ssid:s,pass:document.getElementById('pass').value})});
     var d=await r.json();
     alert(d.ok
-      ?'Aplicando… El gateway se reiniciará y probará la nueva red.\nSi falla, volverá a la anterior solo.'
+      ?'Aplicando\u2026 El gateway se reiniciara y probara la nueva red.\nSi falla, volvera a la anterior solo.'
       :'Error: '+(d.msg||'Desconocido'));
-  }catch(e){alert('Error de conexión.');}
+  }catch(e){alert('Error de conexion.');}
 }
 async function scan(){
   var el=document.getElementById('scan-wrap');
   el.innerHTML='<p style="font-size:.85em;color:#9ca3af;margin-top:8px">Escaneando&hellip; (~5 s)</p>';
   try{
-    var nets=await(await fetch('/scan')).json();
+    var nets=await(await api('/scan')).json();
     if(!nets.length){el.innerHTML='<p style="color:#9ca3af;font-size:.85em;margin-top:8px">Sin redes.</p>';return;}
     var h='<select style="margin-top:8px" onchange="document.getElementById(\'ssid\').value=this.value"><option value="">-- Seleccionar --</option>';
     nets.forEach(function(n){h+='<option value="'+esc(n.ssid)+'">'+esc(n.ssid)+' ('+n.rssi+' dBm'+(n.enc?' &#128274;':'')+')';});
@@ -241,10 +301,10 @@ async function forceSync(){
   var btn=document.getElementById('btn-fsync');
   btn.disabled=true;
   try{
-    var r=await fetch('/force-sync',{method:'POST'});
+    var r=await api('/force-sync',{method:'POST'});
     var d=await r.json();
     if(!d.ok)alert('Error al sincronizar: '+(d.msg||'Desconocido'));
-  }catch(e){alert('Error de conexión.');}
+  }catch(e){alert('Error de conexion.');}
   btn.disabled=false;
   setTimeout(fetchStatus,2500);
 }
@@ -254,19 +314,37 @@ async function save(){
             lorawan_pass:document.getElementById('lorawan_pass').value,
             listen_port:parseInt(document.getElementById('listen_port').value)||6666,
             sync_interval:parseInt(document.getElementById('sync_interval').value)||1};
+  var ap=document.getElementById('admin_pass').value;
+  if(ap)body.admin_pass=ap;
   try{
-    var r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var r=await api('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json();
-    alert(d.ok?'Configuración guardada.\nReiniciando en 3 s…':'Error: '+d.msg);
-  }catch(e){alert('Error de conexión.');}
+    alert(d.ok?'Configuracion guardada.\nReiniciando en 3 s\u2026':'Error: '+d.msg);
+  }catch(e){alert('Error de conexion.');}
 }
 async function rst(){
-  if(!confirm('Resetear toda la configuración y reiniciar?'))return;
-  try{await fetch('/reset');alert('Reseteado. Reiniciando…');}catch(e){}
+  if(!confirm('Resetear toda la configuracion y reiniciar?'))return;
+  try{await api('/reset');alert('Reseteado. Reiniciando\u2026');}catch(e){alert('Error de conexion.');}
 }
 function esc(s){var d=document.createElement('div');d.innerText=s;return d.innerHTML;}
-fetchStatus();
-setInterval(fetchStatus,10000);
+
+token=getToken();
+if(token){
+  api('/status').then(function(r){
+    if(r.status==401){clearToken();showLogin();}
+    else{showPortal();fetchStatus();setInterval(fetchStatus,10000);}
+  }).catch(function(){showLogin();});
+}else{
+  showLogin();
+}
+function showLogin(){
+  document.getElementById('login-card').style.display='block';
+  document.getElementById('portal-wrap').style.display='none';
+}
+function showPortal(){
+  document.getElementById('login-card').style.display='none';
+  document.getElementById('portal-wrap').style.display='block';
+}
 </script>
 </body>
 </html>
@@ -284,6 +362,7 @@ WebPortal::WebPortal(ConfigManager& cfgMgr,
     , _gwCfg(gwCfg)
     , _lora(lora)
     , _restart(false)
+    , _factoryReset(false)
     , _serverOk(false)
     , _serverTested(false)
     , _lastSyncLatencyMs(-1)
@@ -301,6 +380,8 @@ void WebPortal::begin() {
     _server.on("/test-server", HTTP_GET,  [this]() { _handleTestServer();  });
     _server.on("/wifi-apply",  HTTP_POST, [this]() { _handleWifiApply();   });
     _server.on("/force-sync",  HTTP_POST, [this]() { _handleForceSync();   });
+    _server.on("/login",       HTTP_POST, [this]() { _handleLogin();       });
+    _server.on("/logout",      HTTP_POST, [this]() { _handleLogout();      });
     _server.onNotFound(                   [this]() { _handleNotFound();    });
 
     _server.begin();
@@ -315,11 +396,63 @@ bool WebPortal::shouldRestart() const {
     return _restart;
 }
 
+bool WebPortal::shouldFactoryReset() const { return _factoryReset; }
+void WebPortal::clearFactoryReset()        { _factoryReset = false; }
+
+bool WebPortal::_checkAuth() {
+    if (_sessionToken.isEmpty()) return false;
+    String auth = _server.header("Authorization");
+    if (auth.startsWith("Bearer ")) {
+        String tok = auth.substring(7);
+        tok.trim();
+        return tok == _sessionToken;
+    }
+    return false;
+}
+
+void WebPortal::_handleLogin() {
+    if (!_server.hasArg("plain")) {
+        _server.send(400, "application/json", "{\"ok\":false,\"msg\":\"Sin cuerpo JSON\"}");
+        return;
+    }
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, _server.arg("plain"))) {
+        _server.send(400, "application/json", "{\"ok\":false,\"msg\":\"JSON invalido\"}");
+        return;
+    }
+    String user = doc["user"].as<String>();
+    String pass = doc["pass"].as<String>();
+    Serial.printf("[Web] Login intento: user='%s' pass='%s' vs stored='%s'/'%s'\n",
+                  user.c_str(), pass.c_str(),
+                  _gwCfg.adminUser.c_str(), _gwCfg.adminPass.c_str());
+    if (user == _gwCfg.adminUser && pass == _gwCfg.adminPass) {
+        uint32_t r = esp_random();
+        char tok[17];
+        snprintf(tok, sizeof(tok), "%08X%08X", r, esp_random());
+        _sessionToken = tok;
+        Serial.printf("[Web] Login OK — user='%s'\n", user.c_str());
+        _server.send(200, "application/json", "{\"ok\":true,\"token\":\"" + _sessionToken + "\"}");
+    } else {
+        Serial.printf("[Web] Login FAIL — user='%s'\n", user.c_str());
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"Credenciales incorrectas\"}");
+    }
+}
+
+void WebPortal::_handleLogout() {
+    _sessionToken = "";
+    _server.send(200, "application/json", "{\"ok\":true}");
+    Serial.println("[Web] Sesion cerrada.");
+}
+
 void WebPortal::_handleRoot() {
     _server.send_P(200, "text/html", _HTML);
 }
 
 void WebPortal::_handleStatus() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     bool staOK = (WiFi.status() == WL_CONNECTED);
 
     StaticJsonDocument<768> doc;
@@ -369,6 +502,10 @@ bool WebPortal::shouldForceSync() const { return _forceSyncPending; }
 void WebPortal::clearForceSync()        { _forceSyncPending = false; }
 
 void WebPortal::_handleForceSync() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     if (WiFi.status() != WL_CONNECTED) {
         _server.send(503, "application/json",
                      "{\"ok\":false,\"msg\":\"Sin WiFi\"}");
@@ -380,6 +517,10 @@ void WebPortal::_handleForceSync() {
 }
 
 void WebPortal::_handleTestServer() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     if (WiFi.status() != WL_CONNECTED) {
         _server.send(503, "application/json",
                      "{\"ok\":false,\"msg\":\"Sin WiFi\"}");
@@ -429,6 +570,10 @@ void WebPortal::_handleTestServer() {
 }
 
 void WebPortal::_handleScan() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     Serial.println("[Web] Escaneo WiFi solicitado...");
 
     int n = WiFi.scanNetworks();    // sincrónico (~3-5 s)
@@ -454,21 +599,34 @@ void WebPortal::_handleScan() {
 }
 
 void WebPortal::_handleSave() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     if (!_server.hasArg("plain")) {
         _server.send(400, "application/json",
                      "{\"ok\":false,\"msg\":\"Sin cuerpo JSON\"}");
         return;
     }
 
+    String plain = _server.arg("plain");
+    Serial.printf("[Web] /save body: %s\n", plain.c_str());
+
     StaticJsonDocument<512> doc;
-    DeserializationError err = deserializeJson(doc, _server.arg("plain"));
+    DeserializationError err = deserializeJson(doc, plain);
     if (err) {
+        Serial.printf("[Web] /save JSON error: %s\n", err.c_str());
         _server.send(400, "application/json",
                      "{\"ok\":false,\"msg\":\"JSON invalido\"}");
         return;
     }
 
     _gwCfg.serverUrl   = doc["server"].as<String>();
+    if (_gwCfg.serverUrl.isEmpty()) {
+        _server.send(400, "application/json",
+                     "{\"ok\":false,\"msg\":\"URL de servidor vacia\"}");
+        return;
+    }
     _gwCfg.lorawanPass = doc["lorawan_pass"].as<String>();
     if (_gwCfg.lorawanPass.isEmpty()) _gwCfg.lorawanPass = LORAWAN_DEFAULT_PASS;
     _gwCfg.listenPort      = doc["listen_port"]   | LORAWAN_LISTEN_PORT_DEFAULT;
@@ -478,14 +636,28 @@ void WebPortal::_handleSave() {
     float f = doc["freq"].as<float>();
     _gwCfg.loraFreq = (f >= 433.0f && f <= 928.0f) ? f : LORA_FREQ_DEFAULT;
 
+    String newAdminPass = doc["admin_pass"] | "";
+    if (!newAdminPass.isEmpty() && newAdminPass != "null") {
+        _gwCfg.adminPass = newAdminPass;
+        Serial.println("[Web] Contraseña admin actualizada.");
+    }
+    if (_gwCfg.adminPass.isEmpty() || _gwCfg.adminPass == "null") {
+        _gwCfg.adminPass = ADMIN_DEFAULT_PASS;
+    }
+
     _cfgMgr.save(_gwCfg);
 
     _server.send(200, "application/json", "{\"ok\":true}");
-    Serial.println("[Web] Configuracion guardada. Reiniciando en 3 s...");
+    Serial.printf("[Web] Configuracion guardada (serverUrl=%s). Reiniciando en 3 s...\n",
+                  _gwCfg.serverUrl.c_str());
     _restart = true;
 }
 
 void WebPortal::_handleReset() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     _cfgMgr.reset();
     _server.send(200, "application/json",
                  "{\"ok\":true,\"msg\":\"Configuracion reseteada\"}");
@@ -494,6 +666,10 @@ void WebPortal::_handleReset() {
 }
 
 void WebPortal::_handleWifiApply() {
+    if (!_checkAuth()) {
+        _server.send(401, "application/json", "{\"ok\":false,\"msg\":\"No autenticado\"}");
+        return;
+    }
     if (!_server.hasArg("plain")) {
         _server.send(400, "application/json",
                      "{\"ok\":false,\"msg\":\"Sin cuerpo JSON\"}");

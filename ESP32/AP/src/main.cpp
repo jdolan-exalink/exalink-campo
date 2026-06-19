@@ -113,14 +113,22 @@ void setup() {
     display.showTitle();
     delay(1200);
 
+    // 1b ── Botón y LED ───────────────────────────────────────
+    pinMode(BTN_PIN, INPUT_PULLUP);   // botón PRG (activo bajo)
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+
     // 2 ── Configuración NVS ───────────────────────────────────
     cfgMgr.begin();
     cfgMgr.load(gwCfg);
+    if (gwCfg.adminUser.isEmpty()) gwCfg.adminUser = ADMIN_DEFAULT_USER;
+    if (gwCfg.adminPass.isEmpty()) gwCfg.adminPass = ADMIN_DEFAULT_PASS;
     Serial.printf("[Config] GW ID    : %s\n", gwCfg.gatewayId.c_str());
     Serial.printf("[Config] WiFi SSID: %s\n", gwCfg.wifiSsid.c_str());
     Serial.printf("[Config] Servidor : %s\n", gwCfg.serverUrl.c_str());
     Serial.printf("[Config] LoRa     : %.1f MHz\n", gwCfg.loraFreq);
     Serial.printf("[Config] Listen   : puerto %d\n", gwCfg.listenPort);
+    Serial.printf("[Config] Admin    : %s / %s\n", gwCfg.adminUser.c_str(), gwCfg.adminPass.c_str());
 
     // 3 ── GPS ────────────────────────────────────────────────
     gpsMgr.begin();
@@ -222,8 +230,37 @@ void setup() {
 // loop()
 // ─────────────────────────────────────────────────────────────
 static uint32_t _lastDispRefresh = 0;
+static uint32_t _btnPressStart   = 0;
+static bool     _btnWasPressed   = false;
+static bool     _btnLongReset    = false;   // true = ya se disparó el reset largo
 
 void loop() {
+    // ── Botón físico: mantener 10s → factory reset ───────────
+    if (!_btnLongReset) {
+        bool pressed = (digitalRead(BTN_PIN) == LOW);
+        if (pressed && !_btnWasPressed) {
+            _btnPressStart = millis();
+        } else if (pressed && _btnWasPressed) {
+            uint32_t held = millis() - _btnPressStart;
+            if (held >= 10000) {
+                _btnLongReset = true;
+                _btnPressStart = 0;
+                Serial.println("[BTN] 10s detectado — factory reset.");
+                cfgMgr.reset();
+                display.showStatus("FACTORY RESET", "Reiniciando...");
+                delay(1000);
+                ESP.restart();
+            }
+            // Feedback visual: parpadear LED cada 1s
+            if (held % 1000 < 50) {
+                digitalWrite(LED_PIN, (held / 1000) % 2 ? HIGH : LOW);
+            }
+        } else if (!pressed && _btnWasPressed) {
+            digitalWrite(LED_PIN, LOW);
+        }
+        _btnWasPressed = pressed;
+    }
+
     // ── GPS (leer UART frecuentemente) ────────────────────────
     gpsMgr.update();
 

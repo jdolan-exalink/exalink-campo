@@ -32,8 +32,9 @@
 #define GNSS_RX_PIN     33
 #define GNSS_TX_PIN     34
 
-// DS18B20
-#define DS18B20_DATA_PIN  7
+// AHT21B — I2C
+#define AHT21B_SDA_PIN    7
+#define AHT21B_SCL_PIN    6
 
 // Botón PRG (activo LOW, pullup interno)
 #define BTN_PIN      0

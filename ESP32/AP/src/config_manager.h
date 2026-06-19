@@ -13,6 +13,8 @@ struct GatewayConfig {
     String   lorawanPass;
     uint16_t listenPort;
     uint16_t syncIntervalMin;   // intervalo de sincronización con servidor (minutos)
+    String   adminUser;     // usuario admin del portal web
+    String   adminPass;     // contraseña admin del portal web
 };
 
 class ConfigManager {

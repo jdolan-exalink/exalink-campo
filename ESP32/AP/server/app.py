@@ -40,6 +40,7 @@ def _init_db():
             payload_hex TEXT,
             dev_addr    TEXT,
             temperature REAL,
+            humidity    REAL,
             mtype_str   TEXT,
             fcnt        INTEGER,
             created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
@@ -76,6 +77,7 @@ def _init_db():
             wifi_ssid      TEXT,
             wifi_rssi      INTEGER,
             battery_pct    REAL,
+            humidity       REAL,
             last_seen      TIMESTAMP,
             updated_at     TIMESTAMP,
             is_active      INTEGER DEFAULT 1,
@@ -93,6 +95,8 @@ def _init_db():
     existing_packet_columns = {row["name"] for row in conn.execute("PRAGMA table_info(packets)").fetchall()}
     if "temperature" not in existing_packet_columns:
         conn.execute("ALTER TABLE packets ADD COLUMN temperature REAL")
+    if "humidity" not in existing_packet_columns:
+        conn.execute("ALTER TABLE packets ADD COLUMN humidity REAL")
     if "battery" not in existing_packet_columns:
         conn.execute("ALTER TABLE packets ADD COLUMN battery REAL")
     if "charging" not in existing_packet_columns:
@@ -104,6 +108,8 @@ def _init_db():
     existing_device_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "temperature" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN temperature REAL")
+    if "humidity" not in existing_device_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN humidity REAL")
     if "gps_fresh" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN gps_fresh INTEGER DEFAULT 0")
     existing_gw_columns = {row["name"] for row in conn.execute("PRAGMA table_info(gateways)").fetchall()}
@@ -183,6 +189,11 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
         temp = data.get("temp")
     if temp is None:
         temp = data.get("temperature")
+    humidity = data.get("h")
+    if humidity is None:
+        humidity = data.get("hum")
+    if humidity is None:
+        humidity = data.get("humidity")
     charging = data.get("ch")
     wake_boots = data.get("wb")
     wake_time_ms = data.get("wt")
@@ -208,6 +219,8 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
         updates.append("battery_pct = ?"); params.append(battery)
     if temp is not None:
         updates.append("temperature = ?"); params.append(temp)
+    if humidity is not None:
+        updates.append("humidity = ?"); params.append(humidity)
     if data.get("hv") is not None:
         updates.append("hw_version = ?"); params.append(data["hv"])
     if data.get("tp") is not None:
@@ -224,10 +237,11 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
     )
 
     print(f"[JSON] Dev={dev_addr} lat={data.get('lt')} lon={data.get('ln')} "
-          f"bat={battery}% temp={temp} ch={charging} wb={wake_boots} wt={wake_time_ms} hw={data.get('hv')} type={data.get('tp')}")
+          f"bat={battery}% temp={temp} hum={humidity} ch={charging} wb={wake_boots} wt={wake_time_ms} hw={data.get('hv')} type={data.get('tp')}")
     return {
         "dev_addr": dev_addr,
         "temperature": temp,
+        "humidity": humidity,
         "battery": battery,
         "charging": charging,
         "wake_boots": wake_boots,
@@ -304,6 +318,7 @@ def ingest():
         dev_addr = "raw-" + data["payload_hex"][:8]
 
     temperature = decoded.get("temperature") if decoded else None
+    humidity = decoded.get("humidity") if decoded else None
     battery = decoded.get("battery") if decoded else None
     charging = decoded.get("charging") if decoded else None
     wake_boots = decoded.get("wake_boots") if decoded else None
@@ -311,8 +326,8 @@ def ingest():
     conn.execute("""
         INSERT INTO packets
           (gateway_id, received_at, rssi, snr, freq_mhz, sf,
-           payload_hex, dev_addr, temperature, battery, charging, wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+           payload_hex, dev_addr, temperature, humidity, battery, charging, wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     """, (
         pkt["gateway_id"],
         pkt["received_at"],
@@ -323,6 +338,7 @@ def ingest():
         pkt["payload_hex"],
         dev_addr,
         temperature,
+        humidity,
         battery,
         charging,
         wake_boots,
@@ -555,6 +571,7 @@ def equipment():
         "wifi_rssi":      "wifi_rssi",
         "battery_pct":    "battery_pct",
         "temperature":    "temperature",
+        "humidity":       "humidity",
         "device_type":    "device_type",
         "refresh_freq_s": "refresh_freq_s",
         "hw_version":     "hw_version",

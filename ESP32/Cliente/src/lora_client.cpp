@@ -48,8 +48,9 @@ bool LoRaClient::begin(float freq) {
     return true;
 }
 
-bool LoRaClient::send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery, float temperatureC,
-                       bool gpsFresh, bool charging, uint32_t bootCount, uint32_t wakeMs) {
+bool LoRaClient::send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery,
+                       float temperatureC, float humidityPct, bool gpsFresh,
+                       bool charging, uint32_t bootCount, uint32_t wakeMs) {
     // Construir payload JSON compacto
     DynamicJsonDocument doc(448);
     doc["d"]  = "raw-" + getDevAddrHex();
@@ -79,6 +80,11 @@ bool LoRaClient::send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery, f
         doc["t"] = temperatureC;
     } else {
         doc["t"] = nullptr;
+    }
+    if (!isnan(humidityPct)) {
+        doc["h"] = humidityPct;
+    } else {
+        doc["h"] = nullptr;
     }
     doc["b"]  = battery;
     doc["ch"] = charging ? 1 : 0;

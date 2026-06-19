@@ -8,8 +8,9 @@ class LoRaClient {
 public:
     LoRaClient();
     bool     begin(float freq);
-    bool     send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery, float temperatureC,
-                   bool gpsFresh, bool charging, uint32_t bootCount, uint32_t wakeMs);
+    bool     send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery,
+                  float temperatureC, float humidityPct, bool gpsFresh,
+                  bool charging, uint32_t bootCount, uint32_t wakeMs);
     uint32_t getTxCount()       const { return _fcnt; }
     uint32_t getDevAddr()       const { return _devAddr; }
     void     setFcnt(uint32_t n)      { _fcnt = n; }

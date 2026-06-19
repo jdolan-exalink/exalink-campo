@@ -19,7 +19,8 @@ public:
                      uint32_t totalCount = 0,
                      bool charging = false,
                      bool usbConnected = false,
-                     float temperature = NAN);
+                     float temperature = NAN,
+                     float humidity = NAN);
 
 private:
     TFT_eSPI _tft;
@@ -32,6 +33,7 @@ private:
     bool     _charging    = false;
     bool     _usbConnected = false;
     float    _temperature = NAN;
+    float    _humidity = NAN;
     uint32_t _lastUpdate;
 
     static constexpr int16_t VIEW_X = 0;

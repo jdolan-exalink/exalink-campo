@@ -84,6 +84,12 @@
 #define VBAT_ADC_PIN        1   // ADC input
 
 // ============================================================
+// Login admin — valores por defecto
+// ============================================================
+#define ADMIN_DEFAULT_USER  "admin"
+#define ADMIN_DEFAULT_PASS  "admin123"
+
+// ============================================================
 // Gateway sync
 // ============================================================
 #define GW_SYNC_ENDPOINT             "/api/lora/gateway/sync"
@@ -106,6 +112,8 @@
 #define NVS_KEY_PASS_BAK     "pass_bak"
 #define NVS_KEY_GW_NAME      "gw_name"
 #define NVS_KEY_SYNC_INTERVAL "sync_int"
+#define NVS_KEY_ADMIN_USER    "admin_u"
+#define NVS_KEY_ADMIN_PASS    "admin_p"
 
 // ============================================================
 // Misc

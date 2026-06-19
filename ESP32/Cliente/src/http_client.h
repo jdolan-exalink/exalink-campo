@@ -19,6 +19,7 @@ bool postEquipment(const String& serverUrl,
                    const String& wifiSsid, int wifiRssi,
                    float battery,
                    float temperature,
+                   float humidity,
                    uint32_t& outRefreshS,
                    String&   outName);
 

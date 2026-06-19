@@ -2,8 +2,7 @@
 #include <esp_sleep.h>
 #include <driver/rtc_io.h>
 #include <driver/gpio.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <Wire.h>
 #include "config.h"
 #include "config_manager.h"
 #include "lora_client.h"
@@ -51,29 +50,74 @@ static GpsManager      gps;
 static ConfigManager   cfgMgr;
 static ClientConfig    cfg;
 static uint32_t        _wakeAt;  // cuando despertar del display timeout
-static OneWire         _oneWire(DS18B20_DATA_PIN);
-static DallasTemperature _ds18b20(&_oneWire);
 static bool            _tempSensorInit = false;
 static bool            _tempSensorSeen = false;
+static bool            _tempSensorPrimed = false;
 static float           _lastTemperatureC = NAN;
+static float           _lastHumidityPct = NAN;
+static uint8_t         _aht21bAddr = 0x38;
+
+struct ClimateReading {
+    float temperatureC;
+    float humidityPct;
+};
 
 // ─── Bateria ───────────────────────────────────────────────────────────────────
 static uint8_t readBattery() {
-    static int    _rawFilt = 0;
+    static int     _rawFilt = 0;
     static uint8_t _lastPct = 0;
+    static bool    _lastPresent = false;
+
+    digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
+    pinMode(VBAT_ADC_PIN, INPUT_PULLDOWN);
+    delay(8);
+    int rawOff = analogRead(VBAT_ADC_PIN);
 
     digitalWrite(VBAT_ADC_CTRL_PIN, HIGH);  // HIGH activa el divisor
-    delay(2);
-    int raw = analogRead(VBAT_ADC_PIN);
+    delay(25);
+    (void)analogRead(VBAT_ADC_PIN);          // descartar primera conversion tras conmutar
+
+    uint32_t sum = 0;
+    int rawMin = 4095;
+    int rawMax = 0;
+    for (uint8_t i = 0; i < 12; i++) {
+        int r = analogRead(VBAT_ADC_PIN);
+        sum += r;
+        if (r < rawMin) rawMin = r;
+        if (r > rawMax) rawMax = r;
+        delay(2);
+    }
+    int raw = (int)(sum / 12);
     digitalWrite(VBAT_ADC_CTRL_PIN, LOW);   // LOW desactiva (ahorro)
+
+    float v = (raw / 4095.0f) * 3.3f * 4.9f;
+    bool present = raw >= 450
+                && rawMax - rawMin <= 180
+                && v >= 2.5f
+                && v <= 4.35f;
+
+    if (!present) {
+        _rawFilt = 0;
+        _lastPct = 0;
+        if (_lastPresent) {
+            Serial.printf("[Batt] Sin bateria rawOff:%d raw:%d span:%d V:%.2f\n",
+                          rawOff, raw, rawMax - rawMin, v);
+        }
+        _lastPresent = false;
+        return 0;
+    }
+
+    if (!_lastPresent) {
+        Serial.printf("[Batt] Bateria detectada rawOff:%d raw:%d span:%d V:%.2f\n",
+                      rawOff, raw, rawMax - rawMin, v);
+    }
+    _lastPresent = true;
 
     // IIR low-pass: 87.5% historico, 12.5% nueva lectura
     if (_rawFilt == 0) _rawFilt = raw;
     else _rawFilt = (_rawFilt * 7 + raw) / 8;
 
-    if (_rawFilt < 300) { _rawFilt = 0; _lastPct = 0; return 0; }  // sin bateria
-
-    float v   = (_rawFilt / 4095.0f) * 3.3f * 4.9f;
+    v = (_rawFilt / 4095.0f) * 3.3f * 4.9f;
     float pct = (v - 3.0f) / (4.2f - 3.0f) * 100.0f;
     uint8_t p = (uint8_t)constrain(pct, 0.0f, 100.0f);
     if (abs((int)p - (int)_lastPct) <= 2) return _lastPct;  // histeresis 2%
@@ -83,33 +127,133 @@ static uint8_t readBattery() {
 
 static void initTemperatureSensor() {
     if (_tempSensorInit) return;
-    pinMode(DS18B20_DATA_PIN, INPUT_PULLUP);
-    _ds18b20.begin();
-    _ds18b20.setWaitForConversion(true);
-    _ds18b20.setResolution(11);
-    _tempSensorSeen = _ds18b20.getDeviceCount() > 0;
+    pinMode(AHT21B_SDA_PIN, INPUT_PULLUP);
+    pinMode(AHT21B_SCL_PIN, INPUT_PULLUP);
+    Wire.begin(AHT21B_SDA_PIN, AHT21B_SCL_PIN);
+    delay(250);
+    Wire.setClock(100000);
+
+    for (uint8_t attempt = 0; attempt < 3 && !_tempSensorSeen; attempt++) {
+        for (uint8_t addr : { (uint8_t)0x38, (uint8_t)0x39 }) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                _aht21bAddr = addr;
+                _tempSensorSeen = true;
+                break;
+            }
+        }
+        if (!_tempSensorSeen) delay(100);
+    }
+
+    if (_tempSensorSeen) {
+        Wire.beginTransmission(_aht21bAddr);
+        Wire.write(0xBA);  // soft reset
+        Wire.endTransmission();
+        delay(80);
+
+        for (uint8_t cmd : { (uint8_t)0xBE, (uint8_t)0xE1 }) {
+            Wire.beginTransmission(_aht21bAddr);
+            Wire.write(cmd);  // init/calibrate: AHT2x first, AHT1x-compatible fallback
+            Wire.write(0x08);
+            Wire.write(0x00);
+            Wire.endTransmission();
+            delay(40);
+
+            uint8_t status = 0xFF;
+            uint8_t n = Wire.requestFrom((int)_aht21bAddr, 1);
+            if (n == 1) status = Wire.read();
+            Serial.printf("[Temp] AHT21B init cmd=0x%02X status=0x%02X\n", cmd, status);
+            if (status != 0xFF && (status & 0x08)) break;
+        }
+    }
+
     _tempSensorInit = true;
-    Serial.printf("[Temp] DS18B20 %s en GPIO%d\n",
+    Serial.printf("[Temp] AHT21B %s en SDA=%d SCL=%d addr=0x%02X\n",
                   _tempSensorSeen ? "detectado" : "no detectado",
-                  DS18B20_DATA_PIN);
+                  AHT21B_SDA_PIN, AHT21B_SCL_PIN, _aht21bAddr);
 }
 
-static float readTemperatureC() {
+static ClimateReading readClimate() {
     initTemperatureSensor();
-    if (!_tempSensorSeen) return NAN;
+    if (!_tempSensorSeen) return { NAN, NAN };
 
-    _ds18b20.requestTemperatures();
-    float tempC = _ds18b20.getTempCByIndex(0);
-    if (tempC == DEVICE_DISCONNECTED_C || tempC == 85.0f || tempC < -55.0f || tempC > 125.0f) {
-        return _lastTemperatureC;
+    for (uint8_t attempt = 0; attempt < 3; attempt++) {
+    Wire.beginTransmission(_aht21bAddr);
+    Wire.write(0xAC);  // trigger measurement
+    Wire.write(0x33);
+    Wire.write(0x00);
+    bool ok = (Wire.endTransmission() == 0);
+    delay(120);
+
+    uint8_t raw[7] = {};
+    uint8_t n = Wire.requestFrom((int)_aht21bAddr, 7);
+    for (uint8_t i = 0; i < n && i < sizeof(raw); i++) {
+        raw[i] = Wire.read();
+    }
+    ok = ok && n >= 6 && !(raw[0] & 0x80);
+
+    uint32_t humRaw = ((uint32_t)raw[1] << 12)
+                    | ((uint32_t)raw[2] << 4)
+                    | ((uint32_t)raw[3] >> 4);
+    uint32_t tempRaw = (((uint32_t)raw[3] & 0x0F) << 16)
+                     | ((uint32_t)raw[4] << 8)
+                     | raw[5];
+    float humPct = (humRaw * 100.0f) / 1048576.0f;
+    float tempC = (tempRaw * 200.0f) / 1048576.0f - 50.0f;
+
+    bool valid = ok && !isnan(tempC) && !isnan(humPct)
+              && tempC >= -40.0f && tempC <= 85.0f
+              && humPct >= 0.0f && humPct <= 100.0f;
+
+    if (valid && !_tempSensorPrimed) {
+        _tempSensorPrimed = true;
+        Serial.printf("[Temp] AHT21B primera lectura descartada T=%.2fC H=%.2f%%\n",
+                      tempC, humPct);
+        delay(80);
+        continue;
+    }
+
+    if (!valid) {
+        Serial.printf("[Temp] Lectura AHT21B invalida ok=%d n=%u raw=%02X %02X %02X %02X %02X %02X %02X T=%.2fC H=%.2f%%\n",
+                      ok ? 1 : 0, n,
+                      raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6],
+                      tempC, humPct);
+        delay(80);
+        continue;
     }
 
     _lastTemperatureC = tempC;
-    return tempC;
+    _lastHumidityPct = humPct;
+    Serial.printf("[Temp] AHT21B T=%.2fC H=%.2f%%\n", tempC, humPct);
+    return { tempC, humPct };
+    }
+
+    return { _lastTemperatureC, _lastHumidityPct };
 }
 
 static bool checkCharging() {
-    return (digitalRead(CHRG_STAT_PIN) == LOW);  // TP4054 STAT LOW = charging
+    uint8_t lowCount = 0;
+    uint8_t highCount = 0;
+    for (uint8_t i = 0; i < 5; i++) {
+        if (digitalRead(CHRG_STAT_PIN) == LOW) lowCount++;
+        else highCount++;
+        delayMicroseconds(200);
+    }
+    bool charging = lowCount >= 3;  // TP4054 STAT LOW = charging
+
+    static int lastRaw = -1;
+    static int lastCharging = -1;
+    int raw = (lowCount >= highCount) ? LOW : HIGH;
+    if (raw != lastRaw || (int)charging != lastCharging) {
+        Serial.printf("[Charge] STAT=%s low:%u high:%u charging:%s usb:%s\n",
+                      raw == LOW ? "LOW" : "HIGH",
+                      lowCount, highCount,
+                      charging ? "SI" : "NO",
+                      Serial.isPlugged() ? "SI" : "NO");
+        lastRaw = raw;
+        lastCharging = charging ? 1 : 0;
+    }
+    return charging;
 }
 
 // ─── Reset diario via fecha GPS ───────────────────────────────────────────────
@@ -151,7 +295,8 @@ static String formatLastGpsLabel() {
 }
 
 // ─── Pantalla ──────────────────────────────────────────────────────────────────
-static void refreshDisplay(const GpsData& fix, uint8_t bat, bool charging, bool usbConnected, float tempC) {
+static void refreshDisplay(const GpsData& fix, uint8_t bat, bool charging, bool usbConnected,
+                           ClimateReading climate) {
     if (!display.isOn()) return;
     char l1[28], l2[28], l3[28];
     if (fix.valid) {
@@ -168,7 +313,8 @@ static void refreshDisplay(const GpsData& fix, uint8_t bat, bool charging, bool 
         snprintf(l2, sizeof(l2), "TX c/%lus", (unsigned long)(_rtc.txIntervalMs / 1000));
         snprintf(l3, sizeof(l3), "DeepSleep #%lu", (unsigned long)_rtc.bootCount);
     }
-    display.showTracker(l1, l2, l3, bat, _rtc.dailyTxCount, _rtc.fcnt, charging, usbConnected, tempC);
+    display.showTracker(l1, l2, l3, bat, _rtc.dailyTxCount, _rtc.fcnt, charging, usbConnected,
+                        climate.temperatureC, climate.humidityPct);
 }
 
 // ─── GPS power: mantener HIGH durante sleep para hot fix ──────────────────────
@@ -206,7 +352,7 @@ static void doTx() {
         txFix.dateNum = _rtc.lastGpsDateNum;
     }
     uint8_t bat = readBattery();
-    float tempC = readTemperatureC();
+    ClimateReading climate = readClimate();
 
     // Ahorro extremo: si bateria <= 10% → TX cada 1h
     if (bat <= LOW_BAT_THRESHOLD && _rtc.txIntervalMs != LOW_BAT_INTERVAL_MS) {
@@ -217,13 +363,13 @@ static void doTx() {
         Serial.printf("[Batt] Recuperada %d%% > %d%% → TX normal\n", bat, LOW_BAT_RESTORE);
     }
     char tempBuf[16];
-    if (isnan(tempC)) snprintf(tempBuf, sizeof(tempBuf), "N/D");
-    else snprintf(tempBuf, sizeof(tempBuf), "%.1fC", tempC);
+    if (isnan(climate.temperatureC)) snprintf(tempBuf, sizeof(tempBuf), "N/D");
+    else snprintf(tempBuf, sizeof(tempBuf), "%.1fC", climate.temperatureC);
 
     checkDayReset(fix);
     rememberLastGps(fix);
 
-    lora.send(txFix, gps.hasModule(), bat, tempC, gpsFresh,
+    lora.send(txFix, gps.hasModule(), bat, climate.temperatureC, climate.humidityPct, gpsFresh,
               checkCharging(), _rtc.bootCount, millis());
     _rtc.fcnt = lora.getTxCount();
     _rtc.dailyTxCount++;
@@ -234,7 +380,7 @@ static void doTx() {
                   fix.valid ? "OK" : "no", (int)bat, tempBuf,
                   (unsigned long)_rtc.bootCount);
 
-    refreshDisplay(txFix, bat, checkCharging(), Serial.isPlugged(), tempC);
+    refreshDisplay(txFix, bat, checkCharging(), Serial.isPlugged(), climate);
 
 #if LED_PIN != GNSS_RESET_PIN
     uint32_t elapsed = millis() - ledOnMs;
@@ -263,7 +409,8 @@ static void onButtonWake() {
         fix.utcSec = _rtc.lastGpsSec;
         fix.dateNum = _rtc.lastGpsDateNum;
     }
-    refreshDisplay(fix, readBattery(), checkCharging(), Serial.isPlugged(), _lastTemperatureC);
+    refreshDisplay(fix, readBattery(), checkCharging(), Serial.isPlugged(),
+                   { _lastTemperatureC, _lastHumidityPct });
 }
 
 // ─── Deep sleep ────────────────────────────────────────────────────────────────
@@ -325,7 +472,10 @@ void setup() {
 
     // Inicializar pin de control del divisor de bateria
     pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
-    digitalWrite(VBAT_ADC_CTRL_PIN, HIGH);
+    digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
+    pinMode(VBAT_ADC_PIN, INPUT_PULLDOWN);
+    analogReadResolution(12);
+    analogSetPinAttenuation(VBAT_ADC_PIN, ADC_11db);
 
     // Pin de estado de carga TP4054
     pinMode(CHRG_STAT_PIN, INPUT_PULLUP);
@@ -368,9 +518,10 @@ void setup() {
     if (display.isOn()) {
         char buf[28];
         snprintf(buf, sizeof(buf), "TX c/%lus", (unsigned long)(_rtc.txIntervalMs / 1000));
+        ClimateReading climate = readClimate();
         display.showTracker(lora.getDevAddrHex().c_str(), buf, "Buscando GPS...",
                             readBattery(), 0, _rtc.fcnt, checkCharging(), Serial.isPlugged(),
-                            readTemperatureC());
+                            climate.temperatureC, climate.humidityPct);
     }
 
     // Si el usuario presiono el boton, mostrar pantalla
@@ -414,7 +565,14 @@ void loop() {
 
     // USB: pantalla siempre
     if (Serial.isPlugged()) {
+        static uint32_t lastUsbClimateMs = 0;
+        static bool usbClimateRead = false;
         if (!display.isOn()) { display.turnOn(); _wakeAt = 0; }
+        if (!usbClimateRead || now - lastUsbClimateMs >= 60000UL) {
+            readClimate();
+            lastUsbClimateMs = now;
+            usbClimateRead = true;
+        }
         GpsData liveFix = gps.getData();
         if (!liveFix.valid && _rtc.lastGpsKnown) {
             liveFix.lat = _rtc.lastLat;
@@ -426,7 +584,8 @@ void loop() {
             liveFix.utcSec = _rtc.lastGpsSec;
             liveFix.dateNum = _rtc.lastGpsDateNum;
         }
-        refreshDisplay(liveFix, readBattery(), checkCharging(), true, _lastTemperatureC);
+        refreshDisplay(liveFix, readBattery(), checkCharging(), true,
+                       { _lastTemperatureC, _lastHumidityPct });
     }
 
     // Apagar pantalla por timeout
