@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Beef, Layers, Cpu, Bell, Syringe,
-  Heart, Scale, Map, Monitor, RadioTower, LogOut, ChevronRight, X
+  Heart, Scale, Map, Monitor, RadioTower, LogOut, ChevronRight, X, Tag
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { cn } from '@/lib/utils'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/animals', icon: Beef, label: 'Animales' },
+  { to: '/campo', icon: Tag, label: 'Campo / Manga' },
   { to: '/paddocks', icon: Layers, label: 'Potreros' },
   { to: '/devices', icon: Cpu, label: 'Dispositivos' },
   { to: '/alerts', icon: Bell, label: 'Alertas' },

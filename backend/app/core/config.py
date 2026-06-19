@@ -30,8 +30,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
+    # URL pública (dominio o IP) — usada en CORS y para construir links absolutos
+    PUBLIC_URL: str = "https://campo.exalink.com.ar"
+
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "https://campo.exalink.com.ar",
+        "http://localhost:3000",
+        "http://localhost:5173",
+    ]
 
     # Notifications
     EVOLUTION_API_URL: str = ""

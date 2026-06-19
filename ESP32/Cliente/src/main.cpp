@@ -50,6 +50,30 @@ static GpsManager      gps;
 static ConfigManager   cfgMgr;
 static ClientConfig    cfg;
 static uint32_t        _wakeAt;  // cuando despertar del display timeout
+
+// ─── Pairing mode ──────────────────────────────────────────────────────────────
+static bool     _pairingMode     = false;
+static uint32_t _pairingModeAt   = 0;   // millis cuando entró al modo
+static uint32_t _btnLongStart    = 0;
+static bool     _btnLongArmed    = false;
+static bool     _btnLongFired    = false;
+
+static void enterPairingMode() {
+    _pairingMode   = true;
+    _pairingModeAt = millis();
+    display.turnOn();
+    _wakeAt = 0;   // no apagar pantalla mientras está en pairing
+
+    String code = ConfigManager::generateProvisionCode();
+    String uid  = ConfigManager::generateDeviceUid();
+    display.showTracker(
+        "** MODO PAIRING **",
+        "Codigo: " + code,
+        uid.substring(0, 12),
+        0, 0, 0, false, Serial.isPlugged()
+    );
+    Serial.printf("[Pairing] Codigo: %s  UID: %s\n", code.c_str(), uid.c_str());
+}
 static bool            _tempSensorInit = false;
 static bool            _tempSensorSeen = false;
 static bool            _tempSensorPrimed = false;
@@ -500,6 +524,12 @@ void setup() {
     if (_rtc.bootCount == 1)
         _rtc.txIntervalMs = cfg.refreshFreqS * 1000UL;
 
+    // Entrar en modo pairing si no está provisionado
+    if (!cfg.isProvisioned && isColdBoot) {
+        enterPairingMode();
+        return;   // No seguir con LoRa/GPS hasta que sea provisionado
+    }
+
     // GPS UART
     gps.begin();
     initTemperatureSensor();
@@ -534,6 +564,45 @@ void setup() {
 void loop() {
     uint32_t now = millis();
 
+    // ── Modo pairing: esperar sin dormir, botón corto para refrescar pantalla ─
+    if (_pairingMode) {
+        bool pressed = (digitalRead(BTN_PIN) == LOW);
+        if (pressed) {
+            // Refresca la pantalla de pairing en cada pulsación
+            enterPairingMode();
+            delay(300);
+        }
+        // Mantener pantalla encendida mientras está en pairing
+        if (!display.isOn()) display.turnOn();
+        delay(100);
+        return;
+    }
+
+    // ── Botón: corto → pantalla / largo 10s → pairing mode ───────────────────
+    bool btnNow = (digitalRead(BTN_PIN) == LOW);
+    if (btnNow && !_btnLongArmed) {
+        _btnLongStart = now;
+        _btnLongArmed = true;
+        _btnLongFired = false;
+    } else if (btnNow && _btnLongArmed && !_btnLongFired) {
+        if (now - _btnLongStart >= BTN_LONG_PRESS_MS) {
+            _btnLongFired = true;
+            Serial.println("[BTN] 10s — reset a modo pairing.");
+            display.showTracker("Reseteando...", "Modo pairing", "", 0, 0, 0, false, Serial.isPlugged());
+            delay(1000);
+            cfgMgr.resetProvision();
+            _pairingMode = false;   // enterPairingMode() lo setea
+            enterPairingMode();
+        }
+    } else if (!btnNow) {
+        if (_btnLongArmed && !_btnLongFired && now - _btnLongStart < BTN_LONG_PRESS_MS) {
+            // Pulsación corta: encender pantalla
+            if (!display.isOn()) onButtonWake();
+        }
+        _btnLongArmed = false;
+        _btnLongFired = false;
+    }
+
     // Detectar transiciones USB
     static bool _lastUsbPlugged = false;
     bool usbPlugged = Serial.isPlugged();
@@ -543,12 +612,6 @@ void loop() {
         _wakeAt = now + DISPLAY_ON_MS;
     }
     _lastUsbPlugged = usbPlugged;
-
-    // Boton durante ejecucion
-    if (digitalRead(BTN_PIN) == LOW) {
-        if (!display.isOn()) onButtonWake();
-        now = millis();
-    }
 
     gps.update();
 

@@ -7,19 +7,28 @@ struct GatewayStatus {
     bool     gpsValid;
     int      wifiRssi;
     String   wifiSsid;
-    float    batteryPct;   // <0 si no disponible → se envía 0
+    float    batteryPct;
     uint32_t uptimeSec;
     uint32_t pktsTotal;
-    String   name;         // nombre actual del gateway
+    String   name;
 };
 
-// Sincroniza con el servidor. Si el servidor tiene un nombre asignado
-// para este gateway, lo escribe en outName y devuelve true.
-bool syncGateway(const String&        serverUrl,
-                 const String&        gatewayId,
-                 const String&        lorawanPass,
-                 const GatewayStatus& status,
-                 String&              outName);
+struct GatewaySyncResult {
+    bool   ok;
+    String name;
+    bool   isProvisioned;
+};
 
-// Lee el % de batería del ADC. Devuelve <0 si no hay batería/no disponible.
+GatewaySyncResult syncGateway(const String&        serverUrl,
+                               const String&        gatewayId,
+                               const String&        lorawanPass,
+                               const GatewayStatus& status);
+
+// Called before factory reset: un-provisions the device on the backend.
+// Returns true if backend confirmed the reset (or if no WiFi — caller should
+// still proceed with local factory reset).
+bool resetDeviceProvision(const String& serverUrl,
+                          const String& provisionCode,
+                          const String& deviceUid);
+
 float readBatteryPct();

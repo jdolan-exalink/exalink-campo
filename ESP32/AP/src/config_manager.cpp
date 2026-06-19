@@ -21,13 +21,12 @@ void ConfigManager::load(GatewayConfig& cfg) {
         cfg.gatewayName     = "GW-EXA";
         cfg.adminUser       = ADMIN_DEFAULT_USER;
         cfg.adminPass       = ADMIN_DEFAULT_PASS;
+        cfg.isProvisioned   = false;
         save(cfg);
-        // NVS_KEY_INIT ya lo escribe save()
     } else {
         cfg.wifiSsid    = _prefs.getString(NVS_KEY_SSID,      WIFI_DEFAULT_SSID);
         cfg.wifiPass    = _prefs.getString(NVS_KEY_PASS,      WIFI_DEFAULT_PASS);
         cfg.serverUrl   = _prefs.getString(NVS_KEY_SERVER,    SERVER_DEFAULT_URL);
-        cfg.gatewayId   = _prefs.getString(NVS_KEY_GW_ID,     generateGatewayId());
         cfg.loraFreq    = _prefs.getFloat(NVS_KEY_FREQ,       LORA_FREQ_DEFAULT);
         cfg.lorawanPass     = _prefs.getString(NVS_KEY_LORA_PASS,    LORAWAN_DEFAULT_PASS);
         cfg.listenPort      = _prefs.getUShort(NVS_KEY_LISTEN_PORT,  LORAWAN_LISTEN_PORT_DEFAULT);
@@ -35,26 +34,17 @@ void ConfigManager::load(GatewayConfig& cfg) {
         cfg.syncIntervalMin = _prefs.getUShort(NVS_KEY_SYNC_INTERVAL, GW_SYNC_INTERVAL_DEFAULT_MIN);
         cfg.adminUser       = _prefs.getString(NVS_KEY_ADMIN_USER,    ADMIN_DEFAULT_USER);
         cfg.adminPass       = _prefs.getString(NVS_KEY_ADMIN_PASS,    ADMIN_DEFAULT_PASS);
+        cfg.isProvisioned   = _prefs.getBool(NVS_KEY_IS_PROVISIONED,  false);
 
-        // Migración: reparar adminPass corrupto ("null" literal de ArduinoJson)
+        // Gateway ID: always derived from chip ID — ignore stored random IDs
+        cfg.gatewayId = generateGatewayId();
+        _prefs.putString(NVS_KEY_GW_ID, cfg.gatewayId);
+
+        // Fix: corrupt admin password
         if (cfg.adminPass == "null" || cfg.adminPass.isEmpty()) {
             cfg.adminPass = ADMIN_DEFAULT_PASS;
             _prefs.putString(NVS_KEY_ADMIN_PASS, cfg.adminPass);
             Serial.println("[Config] Contraseña admin reparada a default.");
-        }
-
-        // Migración: regenerar IDs del formato viejo "GW-XXXX" (< 16 chars)
-        if (cfg.gatewayId.length() < 16) {
-            cfg.gatewayId = generateGatewayId();
-            _prefs.putString(NVS_KEY_GW_ID, cfg.gatewayId);
-            Serial.printf("[Config] ID migrado al nuevo formato: %s\n", cfg.gatewayId.c_str());
-        }
-
-        // Migración: actualizar URL vieja al nuevo default
-        if (cfg.serverUrl == "http://192.168.1.100:8080") {
-            cfg.serverUrl = SERVER_DEFAULT_URL;
-            _prefs.putString(NVS_KEY_SERVER, cfg.serverUrl);
-            Serial.println("[Config] URL migrada al nuevo servidor.");
         }
     }
 }
@@ -76,18 +66,22 @@ void ConfigManager::save(const GatewayConfig& cfg) {
     _prefs.putUShort(NVS_KEY_SYNC_INTERVAL, cfg.syncIntervalMin);
     _prefs.putString(NVS_KEY_ADMIN_USER,    cfg.adminUser);
     _prefs.putString(NVS_KEY_ADMIN_PASS,    cfg.adminPass);
+    _prefs.putBool(NVS_KEY_IS_PROVISIONED,  cfg.isProvisioned);
     _prefs.putBool(NVS_KEY_INIT,         true);
     _prefs.end();
 
     _prefs.begin(NVS_NAMESPACE, true);
     String verify = _prefs.getString(NVS_KEY_SERVER, "NO_ENCONTRADO");
     _prefs.end();
-    Serial.printf("[Config] Guardado en NVS. serverUrl=%s (verificado=%s)\n",
+    Serial.printf("[Config] Guardado. serverUrl=%s (verificado=%s)\n",
                   cfg.serverUrl.c_str(), verify.c_str());
-    if (verify != cfg.serverUrl) {
-        Serial.printf("[Config] ¡ADVERTENCIA! NVS no coincide: escrito='%s' leido='%s'\n",
-                      cfg.serverUrl.c_str(), verify.c_str());
-    }
+}
+
+void ConfigManager::saveProvisionState(bool provisioned) {
+    _prefs.begin(NVS_NAMESPACE, false);
+    _prefs.putBool(NVS_KEY_IS_PROVISIONED, provisioned);
+    _prefs.end();
+    Serial.printf("[Config] isProvisioned guardado: %s\n", provisioned ? "true" : "false");
 }
 
 void ConfigManager::reset() {
@@ -98,10 +92,23 @@ void ConfigManager::reset() {
 }
 
 String ConfigManager::generateGatewayId() {
-    uint32_t r1 = esp_random();
-    uint32_t r2 = esp_random();
-    char buf[18];
-    snprintf(buf, sizeof(buf), "%08X%08X", r1, r2);
+    // Use full 48-bit MAC as 12-char hex — deterministic, survives resets
+    uint64_t mac = ESP.getEfuseMac();
+    char buf[13];
+    snprintf(buf, sizeof(buf), "%04X%08X",
+             (uint16_t)((mac >> 32) & 0xFFFF),
+             (uint32_t)(mac & 0xFFFFFFFF));
+    return String(buf);
+}
+
+String ConfigManager::generateProvisionCode() {
+    // Lower 32 bits of MAC → "XXXX-XXXX"
+    uint64_t mac = ESP.getEfuseMac();
+    uint32_t lower = (uint32_t)(mac & 0xFFFFFFFF);
+    char buf[10];
+    snprintf(buf, sizeof(buf), "%04X-%04X",
+             (uint16_t)(lower >> 16),
+             (uint16_t)(lower & 0xFFFF));
     return String(buf);
 }
 

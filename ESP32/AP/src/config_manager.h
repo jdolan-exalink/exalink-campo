@@ -7,14 +7,15 @@ struct GatewayConfig {
     String   wifiSsid;
     String   wifiPass;
     String   serverUrl;
-    String   gatewayId;
-    String   gatewayName;   // nombre asignado por el servidor (vacío si no tiene)
+    String   gatewayId;       // Derived from chip ID — deterministic across resets
+    String   gatewayName;
     float    loraFreq;
     String   lorawanPass;
     uint16_t listenPort;
-    uint16_t syncIntervalMin;   // intervalo de sincronización con servidor (minutos)
-    String   adminUser;     // usuario admin del portal web
-    String   adminPass;     // contraseña admin del portal web
+    uint16_t syncIntervalMin;
+    String   adminUser;
+    String   adminPass;
+    bool     isProvisioned;   // true once claimed by a tenant via the provision web
 };
 
 class ConfigManager {
@@ -24,15 +25,19 @@ public:
     void load(GatewayConfig& cfg);
     void save(const GatewayConfig& cfg);
     void reset();
-    static String generateGatewayId();
 
-    // Pending WiFi: guarda nuevas creds y respalda las actuales.
-    // En el próximo boot se prueban; si fallan se revierte solo.
+    // Chip-ID-based identifiers (deterministic — survive factory reset in the server)
+    static String generateGatewayId();    // 12-char hex from full MAC
+    static String generateProvisionCode(); // "XXXX-XXXX" from lower 32 bits of MAC
+
+    void saveProvisionState(bool provisioned);
+
+    // Pending WiFi rollback
     bool hasPendingWifi();
     void savePendingWifi(const String& newSsid, const String& newPass,
                          const String& oldSsid, const String& oldPass);
-    void commitPendingWifi();          // nueva red OK — limpia backup
-    void revertWifi(GatewayConfig& cfg); // nueva red falló — restaura backup
+    void commitPendingWifi();
+    void revertWifi(GatewayConfig& cfg);
 
 private:
     Preferences _prefs;

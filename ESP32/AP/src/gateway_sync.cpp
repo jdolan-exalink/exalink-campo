@@ -4,24 +4,38 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
+static void _beginHttp(HTTPClient& http, WiFiClientSecure& secure,
+                       const String& url, const String& lorawanPass) {
+    if (url.startsWith("https://")) {
+        secure.setInsecure();
+        http.begin(secure, url);
+    } else {
+        http.begin(url);
+    }
+    http.addHeader("Content-Type", "application/json");
+    if (!lorawanPass.isEmpty())
+        http.addHeader("Authorization", "Bearer " + lorawanPass);
+    http.setTimeout(HTTP_TIMEOUT_MS);
+}
+
 float readBatteryPct() {
     pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
     digitalWrite(VBAT_ADC_CTRL_PIN, HIGH);
     delay(10);
     int raw = analogRead(VBAT_ADC_PIN);
     digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
-    if (raw < 50) return -1.0f;   // batería no conectada o pin incorrecto
-    float v   = (raw / 4095.0f) * 3.3f * 2.0f;   // divisor 1:2
+    if (raw < 50) return -1.0f;
+    float v   = (raw / 4095.0f) * 3.3f * 2.0f;
     float pct = (v - 3.0f) / (4.2f - 3.0f) * 100.0f;
     return constrain(pct, 0.0f, 100.0f);
 }
 
-bool syncGateway(const String&        serverUrl,
-                 const String&        gatewayId,
-                 const String&        lorawanPass,
-                 const GatewayStatus& st,
-                 String&              outName) {
-    if (serverUrl.isEmpty()) return false;
+GatewaySyncResult syncGateway(const String&        serverUrl,
+                               const String&        gatewayId,
+                               const String&        lorawanPass,
+                               const GatewayStatus& st) {
+    GatewaySyncResult result = {false, "", false};
+    if (serverUrl.isEmpty()) return result;
 
     DynamicJsonDocument doc(512);
     doc["gateway_id"] = gatewayId;
@@ -29,13 +43,9 @@ bool syncGateway(const String&        serverUrl,
     doc["pkts_total"] = st.pktsTotal;
     doc["wifi_ssid"]  = st.wifiSsid;
     doc["wifi_rssi"]  = st.wifiRssi;
-    if (st.gpsValid) {
-        doc["lat"] = st.lat;
-        doc["lon"] = st.lon;
-    }
+    if (st.gpsValid) { doc["lat"] = st.lat; doc["lon"] = st.lon; }
     doc["battery_pct"] = (st.batteryPct >= 0.0f) ? st.batteryPct : 0.0f;
-    if (st.name.length() > 0)
-        doc["name"] = st.name;
+    if (st.name.length() > 0) doc["name"] = st.name;
 
     String body;
     serializeJson(doc, body);
@@ -44,23 +54,14 @@ bool syncGateway(const String&        serverUrl,
     Serial.printf("[GW-SYNC] POST %s\n", url.c_str());
 
     HTTPClient       http;
-    WiFiClientSecure secureClient;
-    if (serverUrl.startsWith("https://")) {
-        secureClient.setInsecure();
-        http.begin(secureClient, url);
-    } else {
-        http.begin(url);
-    }
-    http.addHeader("Content-Type", "application/json");
-    if (!lorawanPass.isEmpty())
-        http.addHeader("Authorization", "Bearer " + lorawanPass);
-    http.setTimeout(HTTP_TIMEOUT_MS);
+    WiFiClientSecure secure;
+    _beginHttp(http, secure, url, lorawanPass);
 
     int code = http.POST(body);
     if (code <= 0) {
         Serial.printf("[GW-SYNC] Error: %s\n", HTTPClient::errorToString(code).c_str());
         http.end();
-        return false;
+        return result;
     }
 
     String resp = http.getString();
@@ -68,17 +69,55 @@ bool syncGateway(const String&        serverUrl,
 
     if (code != 200 && code != 201) {
         Serial.printf("[GW-SYNC] HTTP %d: %s\n", code, resp.c_str());
-        return false;
+        return result;
     }
+
+    result.ok = true;
 
     DynamicJsonDocument respDoc(256);
-    DeserializationError err = deserializeJson(respDoc, resp);
-    if (!err) {
+    if (!deserializeJson(respDoc, resp)) {
         const char* name = respDoc["name"];
         if (name && strlen(name) > 0)
-            outName = String(name);
+            result.name = String(name);
+        result.isProvisioned = respDoc["is_provisioned"] | false;
     }
 
-    Serial.printf("[GW-SYNC] OK — name='%s'\n", outName.c_str());
-    return true;
+    Serial.printf("[GW-SYNC] OK — name='%s' provisioned=%d\n",
+                  result.name.c_str(), (int)result.isProvisioned);
+    return result;
+}
+
+bool resetDeviceProvision(const String& serverUrl,
+                          const String& provisionCode,
+                          const String& deviceUid) {
+    if (serverUrl.isEmpty() || provisionCode.isEmpty()) return false;
+
+    String url = serverUrl + PROVISION_ENDPOINT + provisionCode;
+    Serial.printf("[Provision] DELETE %s\n", url.c_str());
+
+    DynamicJsonDocument doc(128);
+    doc["device_uid"] = deviceUid;
+    String body;
+    serializeJson(doc, body);
+
+    HTTPClient       http;
+    WiFiClientSecure secure;
+    if (serverUrl.startsWith("https://")) {
+        secure.setInsecure();
+        http.begin(secure, url);
+    } else {
+        http.begin(url);
+    }
+    http.addHeader("Content-Type", "application/json");
+    http.setTimeout(HTTP_TIMEOUT_MS);
+
+    int code = http.sendRequest("DELETE", body);
+    http.end();
+
+    if (code == 200 || code == 204) {
+        Serial.println("[Provision] Reset OK en servidor.");
+        return true;
+    }
+    Serial.printf("[Provision] Reset HTTP %d — continuando de todas formas.\n", code);
+    return false;
 }

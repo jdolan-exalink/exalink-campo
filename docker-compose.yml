@@ -66,6 +66,12 @@ services:
       MQTT_HOST: mosquitto
       MQTT_PORT: "1883"
       LORA_DB_PATH: /app/lora_db/lora.db
+      # URL pública que usan los dispositivos ESP32 y el frontend.
+      # Debe coincidir con -DSERVER_DEFAULT_URL en platformio.ini de cada firmware.
+      # Para lab:  http://10.1.1.100:8000
+      # Para prod: https://campo.exalink.com.ar
+      PUBLIC_URL: ${PUBLIC_URL:-https://campo.exalink.com.ar}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-["https://campo.exalink.com.ar","http://localhost:3000","http://localhost:5173"]}
     depends_on:
       postgres:
         condition: service_healthy

@@ -101,14 +101,19 @@
 
 // ============================================================
 // Servidor — API
+// La URL se define en platformio.ini como build flag (-DSERVER_DEFAULT_URL).
+// Soporta http:// (lab/IP) y https:// (dominio/prod) automáticamente.
 // ============================================================
-#define SERVER_DEFAULT_URL         "https://10.1.1.100:6666"
+#ifndef SERVER_DEFAULT_URL
+#define SERVER_DEFAULT_URL         "https://campo.exalink.com.ar"
+#endif
 #define SERVER_LORAWAN_PASS        "abc1234"
 #define HTTP_TIMEOUT_MS            5000
 
 #define API_EQUIPMENT_ENDPOINT     "/api/lora/equipment"
 #define API_INGEST_ENDPOINT        "/api/lora/ingest"
 #define API_CONFIG_ENDPOINT        "/api/lora/device/config"
+#define API_PROVISION_ENDPOINT     "/api/v1/provision/"
 
 // ============================================================
 // Dispositivo — identidad
@@ -128,6 +133,13 @@
 #define NVS_KEY_DEVICE_TYPE        "dev_type"
 #define NVS_KEY_REFRESH_FREQ_S     "refresh_s"
 #define NVS_KEY_HW_VERSION         "hw_ver"
+#define NVS_KEY_IS_PROVISIONED     "is_prov"
+
+// ============================================================
+// Botón — lógica de pairing
+// ============================================================
+#define BTN_LONG_PRESS_MS   10000UL   // 10s → reset a modo pairing
+#define PAIRING_DISPLAY_MS  30000UL   // cuánto mostrar pairing sin deep sleep
 
 // ============================================================
 // Misc

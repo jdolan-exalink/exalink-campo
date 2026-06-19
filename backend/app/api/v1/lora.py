@@ -269,7 +269,7 @@ async def delete_gateway(gateway_id: str):
 
 
 @router.post("/gateway/sync")
-async def sync_gateway(payload: dict = Body(...)):
+async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get_db)):
     try:
         gw_id = payload.get("gateway_id")
         if not gw_id:
@@ -295,7 +295,15 @@ async def sync_gateway(payload: dict = Body(...)):
         conn.commit()
         row = conn.execute("SELECT name FROM gateways WHERE gateway_id = ?", (gw_id,)).fetchone()
         conn.close()
-        return {"ok": True, "name": row["name"] if row else None}
+
+        # Check provisioning status in PostgreSQL
+        from app.models.device import Device as PgDevice
+        pg_device = await db.scalar(
+            select(PgDevice).where(PgDevice.device_uid == gw_id)
+        )
+        is_provisioned = pg_device.is_provisioned if pg_device else False
+
+        return {"ok": True, "name": row["name"] if row else None, "is_provisioned": is_provisioned}
     except Exception:
         return {"ok": False, "msg": "Error al sincronizar gateway"}
 

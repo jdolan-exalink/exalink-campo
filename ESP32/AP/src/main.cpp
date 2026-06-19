@@ -29,6 +29,7 @@ static bool wifiOK = false;
 // ── Sync periódico ────────────────────────────────────────────
 static uint32_t  _lastSyncMs        = 0;
 static int32_t   _lastSyncLatencyMs = -1;
+static bool      _isProvisioned     = false;
 
 // ── Contadores / reset diario via NTP ─────────────────────────
 static int32_t   _todayDayNum       = -1;   // día UTC actual (time/86400), -1 = sin NTP
@@ -61,6 +62,16 @@ static String buildSrvLine() {
     return "SRV: OK";
 }
 
+static void showPairingScreen() {
+    String code = ConfigManager::generateProvisionCode();
+    display.showStatus(
+        "** MODO PAIRING **",
+        "Codigo: " + code,
+        "exalink.com/provision",
+        gwCfg.gatewayId.substring(0, 12)
+    );
+}
+
 static void doGatewaySync() {
     if (!wifiMgr.isSTAConnected()) return;
     GatewayStatus st;
@@ -75,17 +86,25 @@ static void doGatewaySync() {
     st.uptimeSec   = millis() / 1000;
     st.pktsTotal   = loraMgr.getPacketCount();
 
-    String newName;
     uint32_t t0 = millis();
-    bool ok = syncGateway(gwCfg.serverUrl, gwCfg.gatewayId,
-                          gwCfg.lorawanPass, st, newName);
-    _lastSyncLatencyMs = ok ? (int32_t)(millis() - t0) : -1;
-    if (portal) portal->setServerOk(ok, _lastSyncLatencyMs);
+    GatewaySyncResult res = syncGateway(gwCfg.serverUrl, gwCfg.gatewayId,
+                                        gwCfg.lorawanPass, st);
+    _lastSyncLatencyMs = res.ok ? (int32_t)(millis() - t0) : -1;
+    if (portal) portal->setServerOk(res.ok, _lastSyncLatencyMs);
 
-    if (ok && newName.length() > 0 && newName != gwCfg.gatewayName) {
-        gwCfg.gatewayName = newName;
-        cfgMgr.save(gwCfg);
-        Serial.printf("[Sync] Nombre del GW actualizado: '%s'\n", newName.c_str());
+    if (res.ok) {
+        if (res.name.length() > 0 && res.name != gwCfg.gatewayName) {
+            gwCfg.gatewayName = res.name;
+            cfgMgr.save(gwCfg);
+            Serial.printf("[Sync] Nombre del GW actualizado: '%s'\n", res.name.c_str());
+        }
+        if (res.isProvisioned != _isProvisioned) {
+            _isProvisioned = res.isProvisioned;
+            gwCfg.isProvisioned = res.isProvisioned;
+            cfgMgr.saveProvisionState(res.isProvisioned);
+            Serial.printf("[Provision] Estado actualizado: %s\n",
+                          _isProvisioned ? "PROVISIONADO" : "SIN PROVISIONAR");
+        }
     }
     _lastSyncMs = millis();
 }
@@ -123,12 +142,15 @@ void setup() {
     cfgMgr.load(gwCfg);
     if (gwCfg.adminUser.isEmpty()) gwCfg.adminUser = ADMIN_DEFAULT_USER;
     if (gwCfg.adminPass.isEmpty()) gwCfg.adminPass = ADMIN_DEFAULT_PASS;
-    Serial.printf("[Config] GW ID    : %s\n", gwCfg.gatewayId.c_str());
-    Serial.printf("[Config] WiFi SSID: %s\n", gwCfg.wifiSsid.c_str());
-    Serial.printf("[Config] Servidor : %s\n", gwCfg.serverUrl.c_str());
-    Serial.printf("[Config] LoRa     : %.1f MHz\n", gwCfg.loraFreq);
-    Serial.printf("[Config] Listen   : puerto %d\n", gwCfg.listenPort);
-    Serial.printf("[Config] Admin    : %s / %s\n", gwCfg.adminUser.c_str(), gwCfg.adminPass.c_str());
+    _isProvisioned = gwCfg.isProvisioned;
+    Serial.printf("[Config] GW ID       : %s\n", gwCfg.gatewayId.c_str());
+    Serial.printf("[Config] Prov Code   : %s\n", ConfigManager::generateProvisionCode().c_str());
+    Serial.printf("[Config] WiFi SSID   : %s\n", gwCfg.wifiSsid.c_str());
+    Serial.printf("[Config] Servidor    : %s\n", gwCfg.serverUrl.c_str());
+    Serial.printf("[Config] LoRa        : %.1f MHz\n", gwCfg.loraFreq);
+    Serial.printf("[Config] Listen      : puerto %d\n", gwCfg.listenPort);
+    Serial.printf("[Config] Admin       : %s / %s\n", gwCfg.adminUser.c_str(), gwCfg.adminPass.c_str());
+    Serial.printf("[Config] Provisionado: %s\n", _isProvisioned ? "SI" : "NO");
 
     // 3 ── GPS ────────────────────────────────────────────────
     gpsMgr.begin();
@@ -211,7 +233,9 @@ void setup() {
     }
 
     // 7 ── Estado final ────────────────────────────────────────
-    {
+    if (!_isProvisioned) {
+        showPairingScreen();
+    } else {
         String l1   = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
                       + "  " + wifiMgr.getLocalIP();
         String l2   = gwCfg.gatewayId;
@@ -235,7 +259,7 @@ static bool     _btnWasPressed   = false;
 static bool     _btnLongReset    = false;   // true = ya se disparó el reset largo
 
 void loop() {
-    // ── Botón físico: mantener 10s → factory reset ───────────
+    // ── Botón físico: mantener 10s → factory reset + unregister ─
     if (!_btnLongReset) {
         bool pressed = (digitalRead(BTN_PIN) == LOW);
         if (pressed && !_btnWasPressed) {
@@ -245,13 +269,21 @@ void loop() {
             if (held >= 10000) {
                 _btnLongReset = true;
                 _btnPressStart = 0;
-                Serial.println("[BTN] 10s detectado — factory reset.");
+                Serial.println("[BTN] 10s — desregistrando y haciendo factory reset.");
+                display.showStatus("Desregistrando...", "Espere...");
+
+                // Si hay WiFi, notificar al servidor antes de borrar NVS
+                if (wifiMgr.isSTAConnected()) {
+                    String code = ConfigManager::generateProvisionCode();
+                    resetDeviceProvision(gwCfg.serverUrl, code, gwCfg.gatewayId);
+                }
+
                 cfgMgr.reset();
                 display.showStatus("FACTORY RESET", "Reiniciando...");
-                delay(1000);
+                delay(1500);
                 ESP.restart();
             }
-            // Feedback visual: parpadear LED cada 1s
+            // Feedback: LED parpadea una vez por segundo (cuenta regresiva visual)
             if (held % 1000 < 50) {
                 digitalWrite(LED_PIN, (held / 1000) % 2 ? HIGH : LOW);
             }
@@ -297,16 +329,20 @@ void loop() {
     // ── Refresco periódico pantalla cada 5 s ──────────────────
     if (millis() - _lastDispRefresh >= 5000) {
         _lastDispRefresh = millis();
-        String l1 = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
-                    + "  " + wifiMgr.getLocalIP();
-        String l2 = gwCfg.gatewayId;
-        String l4 = buildSrvLine();
-        if (loraOK) {
-            String l3 = String(gwCfg.loraFreq, 1) + " MHz  #" +
-                        String(loraMgr.getPacketCount());
-            display.showStatus(l1, l2, l3, l4);
+        if (!_isProvisioned) {
+            showPairingScreen();
         } else {
-            display.showStatus("LoRa: ERROR", l2, "Revisar hardware", l4);
+            String l1 = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
+                        + "  " + wifiMgr.getLocalIP();
+            String l2 = gwCfg.gatewayId;
+            String l4 = buildSrvLine();
+            if (loraOK) {
+                String l3 = String(gwCfg.loraFreq, 1) + " MHz  #" +
+                            String(loraMgr.getPacketCount());
+                display.showStatus(l1, l2, l3, l4);
+            } else {
+                display.showStatus("LoRa: ERROR", l2, "Revisar hardware", l4);
+            }
         }
     }
 

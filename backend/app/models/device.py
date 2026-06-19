@@ -18,8 +18,13 @@ class DeviceType(str, enum.Enum):
 class Device(TenantScopedMixin, Base):
     __tablename__ = "devices"
 
-    establishment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("establishments.id", ondelete="CASCADE"), nullable=False, index=True
+    # Override mixin: nullable so devices can live in inventory before being claimed
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    establishment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("establishments.id", ondelete="CASCADE"), nullable=True, index=True
     )
     animal_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("animals.id", ondelete="SET NULL"), nullable=True, index=True
@@ -43,8 +48,14 @@ class Device(TenantScopedMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="devices")
-    establishment: Mapped["Establishment"] = relationship("Establishment", back_populates="devices")
+    # Provisioning
+    provision_code: Mapped[str | None] = mapped_column(String(9), unique=True, nullable=True, index=True)
+    is_provisioned: Mapped[bool] = mapped_column(Boolean, default=False)
+    provisioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provisioned_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    tenant: Mapped["Tenant | None"] = relationship("Tenant", back_populates="devices")
+    establishment: Mapped["Establishment | None"] = relationship("Establishment", back_populates="devices")
     animal: Mapped["Animal | None"] = relationship("Animal", back_populates="device")
     locations: Mapped[list["Location"]] = relationship(
         "Location", back_populates="device", lazy="noload"
