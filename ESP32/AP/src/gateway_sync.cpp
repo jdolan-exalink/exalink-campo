@@ -81,13 +81,43 @@ float readBatteryPct() {
     return p;
 }
 
+// ── Charging detection by voltage trend ─────────────────────
+// Track last N voltage readings. If trend is rising → charging.
+static float _vHistory[4] = {0};
+static uint8_t _vIdx = 0;
+static bool _vInit = false;
+
 bool checkCharging() {
-    // Wireless Tracker V1.1: no CHRG_STAT pin exposed.
-    // Heuristic: if battery voltage >= 4.15V → likely charging/full.
-    // The charger IC (TP4054) holds VBAT near 4.2V when USB connected.
     if (_rawFilt <= 0) return false;
     float v = (_rawFilt / 4095.0f) * 3.3f * VBAT_DIVIDER;
-    return v >= 4.15f;
+
+    // Store voltage in circular buffer
+    if (!_vInit) {
+        for (uint8_t i = 0; i < 4; i++) _vHistory[i] = v;
+        _vInit = true;
+    }
+    _vHistory[_vIdx] = v;
+    _vIdx = (_vIdx + 1) % 4;
+
+    // Compare current voltage vs oldest reading (4 cycles ago)
+    float vOld = _vHistory[_vIdx];
+    float vNew = v;
+    float delta = vNew - vOld;
+
+    // Rising voltage → charging
+    if (delta > 0.02f) {
+        Serial.printf("[CHG] CHARGING (delta=+%.3f V old=%.2f new=%.2f)\n", delta, vOld, vNew);
+        return true;
+    }
+
+    // Stable at high voltage (>= 4.15V) → fully charged or USB connected
+    if (v >= 4.15f) {
+        Serial.printf("[CHG] FULL/USB (v=%.2f)\n", v);
+        return true;
+    }
+
+    Serial.printf("[CHG] DISCHARGING (delta=%.3f V=%.2f)\n", delta, v);
+    return false;
 }
 
 GatewaySyncResult syncGateway(const String&        serverUrl,
