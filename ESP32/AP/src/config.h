@@ -73,7 +73,7 @@
 #ifndef SERVER_DEFAULT_URL
 #define SERVER_DEFAULT_URL  "https://campo.exalink.com.ar"
 #endif
-#define SERVER_ENDPOINT     "/api/lora/ingest"
+#define SERVER_ENDPOINT     "/api/v1/lora/ingest"
 #define HTTP_TIMEOUT_MS     5000
 #define LORAWAN_LISTEN_PORT_DEFAULT  6666
 
@@ -101,7 +101,7 @@
 // ============================================================
 // Gateway sync
 // ============================================================
-#define GW_SYNC_ENDPOINT             "/api/lora/gateway/sync"
+#define GW_SYNC_ENDPOINT             "/api/v1/lora/gateway/sync"
 #define GW_SYNC_INTERVAL_DEFAULT_MIN  1   // 1 minuto por defecto
 
 // ============================================================
