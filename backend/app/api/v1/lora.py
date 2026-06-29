@@ -135,6 +135,28 @@ def _ensure_lora_schema() -> None:
     conn = _get_db()
     try:
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS packets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                gateway_id  TEXT    NOT NULL,
+                received_at REAL,
+                rssi        INTEGER,
+                snr         REAL,
+                freq_mhz    REAL,
+                sf          INTEGER,
+                payload_hex TEXT,
+                dev_addr    TEXT,
+                temperature REAL,
+                humidity    REAL,
+                battery     REAL,
+                charging    INTEGER,
+                wake_boots  INTEGER,
+                wake_time_ms INTEGER,
+                mtype_str   TEXT,
+                fcnt        INTEGER,
+                a0x REAL, a0y REAL, a0z REAL,
+                a1x REAL, a1y REAL, a1z REAL,
+                created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+            );
             CREATE TABLE IF NOT EXISTS gateways (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 gateway_id  TEXT NOT NULL UNIQUE,
@@ -156,21 +178,78 @@ def _ensure_lora_schema() -> None:
                 notes       TEXT,
                 created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
             );
+            CREATE TABLE IF NOT EXISTS devices (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                dev_addr       TEXT NOT NULL UNIQUE,
+                name           TEXT,
+                dev_eui        TEXT,
+                device_type    TEXT DEFAULT 'sensor',
+                gateway_id     TEXT,
+                refresh_freq_s INTEGER DEFAULT 60,
+                hw_version     TEXT,
+                lat            REAL,
+                lon            REAL,
+                wifi_ssid      TEXT,
+                wifi_rssi      INTEGER,
+                battery_pct    REAL,
+                temperature    REAL,
+                humidity       REAL,
+                charging       INTEGER DEFAULT 0,
+                is_paired      INTEGER DEFAULT 0,
+                pairing_code   TEXT,
+                pairing_expires_at TIMESTAMP,
+                a0x REAL, a0y REAL, a0z REAL,
+                a1x REAL, a1y REAL, a1z REAL,
+                last_seen      TIMESTAMP,
+                updated_at     TIMESTAMP,
+                is_active      INTEGER DEFAULT 1,
+                notes          TEXT,
+                created_at     TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS config (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_packets_created_at ON packets(created_at);
+            CREATE INDEX IF NOT EXISTS idx_packets_gateway    ON packets(gateway_id);
+            CREATE INDEX IF NOT EXISTS idx_packets_dev_addr   ON packets(dev_addr);
         """)
-        existing = {row["name"] for row in conn.execute("PRAGMA table_info(gateways)").fetchall()}
-        migrations = [
-            ("is_paired",            "INTEGER DEFAULT 0"),
-            ("pairing_code",         "TEXT"),
-            ("pairing_expires_at",   "TIMESTAMP"),
-            ("wifi_ip",              "TEXT"),
-            ("charging",             "INTEGER DEFAULT 0"),
-            ("temperature",          "REAL"),
-            ("humidity",             "REAL"),
-        ]
-        for col, decl in migrations:
-            if col not in existing:
-                conn.execute(f"ALTER TABLE gateways ADD COLUMN {col} {decl}")
-                print(f"[LoraDB] Columna agregada: gateways.{col}")
+
+        # Migraciones defensivas para tablas pre-existentes
+        for tbl, cols in [
+            ("gateways", [
+                ("is_paired",          "INTEGER DEFAULT 0"),
+                ("pairing_code",       "TEXT"),
+                ("pairing_expires_at", "TIMESTAMP"),
+                ("wifi_ip",            "TEXT"),
+                ("charging",           "INTEGER DEFAULT 0"),
+                ("temperature",        "REAL"),
+                ("humidity",           "REAL"),
+            ]),
+            ("packets", [
+                ("battery",      "REAL"),
+                ("charging",     "INTEGER"),
+                ("wake_boots",   "INTEGER"),
+                ("wake_time_ms", "INTEGER"),
+                ("a0x", "REAL"), ("a0y", "REAL"), ("a0z", "REAL"),
+                ("a1x", "REAL"), ("a1y", "REAL"), ("a1z", "REAL"),
+            ]),
+            ("devices", [
+                ("temperature",         "REAL"),
+                ("charging",            "INTEGER DEFAULT 0"),
+                ("is_paired",           "INTEGER DEFAULT 0"),
+                ("pairing_code",        "TEXT"),
+                ("pairing_expires_at",  "TIMESTAMP"),
+                ("a0x", "REAL"), ("a0y", "REAL"), ("a0z", "REAL"),
+                ("a1x", "REAL"), ("a1y", "REAL"), ("a1z", "REAL"),
+            ]),
+        ]:
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+            for col, decl in cols:
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {decl}")
+                    print(f"[LoraDB] Columna agregada: {tbl}.{col}")
+
         conn.commit()
     except Exception as e:
         print(f"[LoraDB] WARNING: no se pudo asegurar schema: {e}")
