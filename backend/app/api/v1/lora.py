@@ -307,10 +307,18 @@ async def pair_gateway(payload: dict = Body(...)):
 
         conn = _get_db()
 
-        # Si el cliente mandó gateway_id (lo seleccionó del banner de pendientes),
-        # validamos que coincida con el código. Si NO, buscamos el código directamente.
-        row = None
-        if hint_gw_id:
+        # Buscar por código primero (más confiable — el GW regenera códigos)
+        row = conn.execute(
+            "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+            "FROM gateways WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
+            "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now') "
+            "ORDER BY pairing_expires_at DESC LIMIT 1",
+            (code,),
+        ).fetchone()
+
+        # Si no encontró por código pero el usuario dio un gateway_id,
+        # verificar si ese GW tiene el código (podría haber regenerado)
+        if not row and hint_gw_id:
             row = conn.execute(
                 "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
                 "FROM gateways WHERE gateway_id = ?",
@@ -318,15 +326,7 @@ async def pair_gateway(payload: dict = Body(...)):
             ).fetchone()
             if row and (row["pairing_code"] or "") != code:
                 conn.close()
-                return {"ok": False, "msg": "El codigo no corresponde al gateway seleccionado."}
-        if row is None:
-            row = conn.execute(
-                "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
-                "FROM gateways WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
-                "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now') "
-                "ORDER BY pairing_expires_at DESC LIMIT 1",
-                (code,),
-            ).fetchone()
+                return {"ok": False, "msg": "El codigo no corresponde a este gateway. Verifica el codigo en la pantalla OLED."}
 
         if not row:
             conn.close()
@@ -454,12 +454,16 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
         ).fetchone()
         conn.close()
 
-        # Check provisioning status in PostgreSQL
-        from app.models.device import Device as PgDevice
-        pg_device = await db.scalar(
-            select(PgDevice).where(PgDevice.device_uid == gw_id)
-        )
-        is_provisioned = pg_device.is_provisioned if pg_device else False
+        # Check provisioning status in PostgreSQL (non-critical — si falla, devolvemos False)
+        is_provisioned = False
+        try:
+            from app.models.device import Device as PgDevice
+            pg_device = await db.scalar(
+                select(PgDevice).where(PgDevice.device_uid == gw_id)
+            )
+            is_provisioned = pg_device.is_provisioned if pg_device else False
+        except Exception as e:
+            print(f"[LoraSync] WARN: PostgreSQL query falló (no crítico): {e}")
 
         return {
             "ok": True,
@@ -467,7 +471,10 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             "is_paired": bool(row["is_paired"]) if row else False,
             "is_provisioned": is_provisioned,
         }
-    except Exception:
+    except Exception as e:
+        print(f"[LoraSync] ERROR sync_gateway: {e}")
+        import traceback
+        traceback.print_exc()
         return {"ok": False, "msg": "Error al sincronizar gateway"}
 
 

@@ -580,8 +580,20 @@ def gateway_pair():
         return jsonify({"ok": False, "msg": "pairing_code requerido"}), 400
 
     conn = _get_db()
-    row = None
-    if hint_gw_id:
+
+    # Buscar por código primero (más confiable — el GW regenera códigos)
+    row = conn.execute(
+        "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+        "FROM gateways "
+        "WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
+        "AND pairing_expires_at IS NOT NULL "
+        "AND datetime(pairing_expires_at) > datetime('now', 'localtime') "
+        "ORDER BY pairing_expires_at DESC LIMIT 1",
+        (code,),
+    ).fetchone()
+
+    # Si no encontró por código pero el usuario dio un gateway_id
+    if not row and hint_gw_id:
         row = conn.execute(
             "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
             "FROM gateways WHERE gateway_id = ?",
@@ -589,17 +601,7 @@ def gateway_pair():
         ).fetchone()
         if row and (row["pairing_code"] or "") != code:
             conn.close()
-            return jsonify({"ok": False, "msg": "El codigo no corresponde al gateway seleccionado."}), 403
-    if row is None:
-        row = conn.execute(
-            "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
-            "FROM gateways "
-            "WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
-            "AND pairing_expires_at IS NOT NULL "
-            "AND datetime(pairing_expires_at) > datetime('now', 'localtime') "
-            "ORDER BY pairing_expires_at DESC LIMIT 1",
-            (code,),
-        ).fetchone()
+            return jsonify({"ok": False, "msg": "El codigo no corresponde a este gateway. Verifica el codigo en la pantalla OLED."}), 403
 
     if not row:
         conn.close()

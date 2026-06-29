@@ -89,15 +89,27 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
 
     DynamicJsonDocument respDoc(256);
     if (!deserializeJson(respDoc, resp)) {
+        // Si el backend dice que no fue OK, registrar el error
+        bool serverOk = respDoc["ok"] | true;
+        if (!serverOk) {
+            const char* msg = respDoc["msg"] | "";
+            Serial.printf("[GW-SYNC] WARN: Backend respondio ok=false: %s\n", msg);
+            result.ok = false;
+            http.end();
+            return result;
+        }
         const char* name = respDoc["name"];
         if (name && strlen(name) > 0)
             result.name = String(name);
         result.isProvisioned = respDoc["is_provisioned"] | false;
         result.isPaired      = respDoc["is_paired"] | false;
+    } else {
+        Serial.printf("[GW-SYNC] WARN: No se pudo parsear respuesta: %s\n", resp.substring(0, 100).c_str());
     }
 
     Serial.printf("[GW-SYNC] OK — name='%s' provisioned=%d paired=%d\n",
                   result.name.c_str(), (int)result.isProvisioned, (int)result.isPaired);
+    Serial.printf("[GW-SYNC] RAW: %s\n", resp.substring(0, 200).c_str());
     return result;
 }
 
