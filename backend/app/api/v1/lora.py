@@ -735,6 +735,7 @@ async def get_devices(db: AsyncSession = Depends(get_db)):
             LEFT JOIN (
                 SELECT dev_addr, COUNT(*) AS total_packets FROM packets GROUP BY dev_addr
             ) p ON d.dev_addr = p.dev_addr
+            WHERE COALESCE(d.is_paired, 0) = 1
             ORDER BY d.last_seen DESC NULLS LAST
         """).fetchall()
         conn.close()
