@@ -18,9 +18,11 @@ static void _beginHttp(HTTPClient& http, WiFiClientSecure& secure,
     http.setTimeout(HTTP_TIMEOUT_MS);
 }
 
+// ── Battery state (file scope for readBatteryPct + checkCharging) ──
+static int     _rawFilt = 0;
+static uint8_t _lastPct = 0;
+
 float readBatteryPct() {
-    static int   _rawFilt = 0;
-    static uint8_t _lastPct = 0;
 
     // 1. Activar divisor de voltaje
     pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
@@ -46,13 +48,17 @@ float readBatteryPct() {
     // 4. Apagar divisor (ahorrar energía)
     digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
 
-    // 5. Validar presencia de batería
+    // 5. Calcular voltaje
     float v = (raw / 4095.0f) * 3.3f * VBAT_DIVIDER;
+
+    Serial.printf("[BAT] raw=%d min=%d max=%d v=%.2f\n", raw, rawMin, rawMax, v);
+
+    // 5b. Validar presencia de batería
     bool present = raw >= 50
-                && (rawMax - rawMin) <= 200   // ruido máximo aceptable
                 && v >= 2.5f && v <= 4.35f;
 
     if (!present) {
+        Serial.printf("[BAT] NO PRESENT raw=%d v=%.2f\n", raw, v);
         _rawFilt = 0;
         _lastPct = 0;
         return -1.0f;
@@ -67,6 +73,8 @@ float readBatteryPct() {
     float pct = (v - VBAT_VMIN) / (VBAT_VMAX - VBAT_VMIN) * 100.0f;
     uint8_t p = (uint8_t)constrain(pct, 0.0f, 100.0f);
 
+    Serial.printf("[BAT] filt=%d v=%.2f pct=%u\n", _rawFilt, v, p);
+
     // 8. Histéresis 2% — suprimir fluctuaciones
     if (abs((int)p - (int)_lastPct) <= 2) return _lastPct;
     _lastPct = p;
@@ -74,10 +82,12 @@ float readBatteryPct() {
 }
 
 bool checkCharging() {
-    // El Wireless Tracker V1.1 no tiene CHRG_STAT pin expuesto.
-    // Usamos detección USB del ESP32-S3 como proxy.
-    // Si USB conectado + batería < 95% → asumimos cargando.
-    return false;  // simplificado: sin pin de charging硬件
+    // Wireless Tracker V1.1: no CHRG_STAT pin exposed.
+    // Heuristic: if battery voltage >= 4.15V → likely charging/full.
+    // The charger IC (TP4054) holds VBAT near 4.2V when USB connected.
+    if (_rawFilt <= 0) return false;
+    float v = (_rawFilt / 4095.0f) * 3.3f * VBAT_DIVIDER;
+    return v >= 4.15f;
 }
 
 GatewaySyncResult syncGateway(const String&        serverUrl,

@@ -89,9 +89,9 @@
 // ============================================================
 // Batería — Heltec Wireless Tracker V1.1
 // ============================================================
-#define VBAT_ADC_CTRL_PIN  37   // HIGH para habilitar divisor
-#define VBAT_ADC_PIN        1   // ADC input (Vbat_Read, divider 4.9x)
-#define VBAT_DIVIDER        4.9f // factor del divisor resistivo (datasheet)
+#define VBAT_ADC_CTRL_PIN   2   // ADC Ctrl — HIGH para habilitar divisor
+#define VBAT_ADC_PIN        1   // ADC1_CH0 — Vbat_Read
+#define VBAT_DIVIDER        4.9f // VBAT = 100/(100+390) * VADC_IN
 #define VBAT_VMIN           3.0f // 0%
 #define VBAT_VMAX           4.2f // 100%
 #define VBAT_SAMPLES        12   // oversampling
