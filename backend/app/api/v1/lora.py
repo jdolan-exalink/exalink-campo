@@ -519,7 +519,7 @@ async def get_pending_gateways():
             WHERE COALESCE(g.is_paired, 0) = 0
               AND g.pairing_code IS NOT NULL
               AND g.pairing_expires_at IS NOT NULL
-              AND g.pairing_expires_at > datetime('now')
+              AND g.pairing_expires_at > datetime('now', 'localtime')
             ORDER BY g.pairing_expires_at ASC
         """).fetchall()
         conn.close()
@@ -544,7 +544,7 @@ async def pair_gateway(payload: dict = Body(...)):
         row = conn.execute(
             "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
             "FROM gateways WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
-            "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now') "
+            "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now', 'localtime') "
             "ORDER BY pairing_expires_at DESC LIMIT 1",
             (code,),
         ).fetchone()
@@ -935,7 +935,7 @@ async def get_pending_devices():
             WHERE COALESCE(d.is_paired, 0) = 0
               AND d.pairing_code IS NOT NULL
               AND d.pairing_expires_at IS NOT NULL
-              AND d.pairing_expires_at > datetime('now')
+              AND d.pairing_expires_at > datetime('now', 'localtime')
             ORDER BY d.pairing_expires_at ASC
         """).fetchall()
         conn.close()
