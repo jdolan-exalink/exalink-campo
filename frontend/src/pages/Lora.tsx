@@ -160,12 +160,6 @@ export default function Lora() {
     onError: () => toast.error('Error al actualizar'),
   })
 
-  const createDeviceMutation = useMutation({
-    mutationFn: (payload: Partial<LoraDevice>) => api.post('/lora/devices', payload),
-    onSuccess: () => { toast.success('Dispositivo registrado'); queryClient.invalidateQueries({ queryKey: ['lora-devices'] }) },
-    onError: () => toast.error('Error al registrar dispositivo'),
-  })
-
   const deleteDeviceMutation = useMutation({
     mutationFn: (devAddr: string) => api.delete(`/lora/devices/${devAddr}`),
     onSuccess: () => { toast.success('Dispositivo eliminado'); queryClient.invalidateQueries({ queryKey: ['lora-devices'] }) },
@@ -296,11 +290,9 @@ export default function Lora() {
             pendingDevices={pendingDevices?.devices ?? []}
             loading={devLoading}
             pendingLoading={pendingDevLoading}
-            onCreate={(d) => createDeviceMutation.mutate(d)}
             onDelete={(id, name) => setConfirmAction({ title: 'Eliminar dispositivo', msg: `Eliminar "${name || id}"? Se perdera su registro.`, onOk: () => deleteDeviceMutation.mutate(id) })}
             onUpdate={(d) => updateDeviceMutation.mutate(d)}
             onPair={(d) => pairDeviceMutation.mutate(d)}
-            creating={createDeviceMutation.isPending}
             pairing={pairDeviceMutation.isPending}
           />
         )}
@@ -777,18 +769,17 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
 
 // ── Devices Tab ───────────────────────────────────────────────────
 
-function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate, onDelete, onUpdate, onPair, creating, pairing }: {
+function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onDelete, onUpdate, onPair, pairing }: {
   devices: LoraDevice[]; pendingDevices: LoraPendingDevice[]; loading: boolean; pendingLoading: boolean;
-  onCreate: (d: Partial<LoraDevice>) => void; onDelete: (id: string, name?: string | null) => void;
+  onDelete: (id: string, name?: string | null) => void;
   onUpdate: (d: { dev_addr: string; name?: string; device_type?: string; refresh_freq_s?: number }) => void;
   onPair: (d: { dev_addr: string; name?: string }) => void;
-  creating: boolean; pairing: boolean;
+  pairing: boolean;
 }) {
   const [editingAddr, setEditingAddr] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState('sensor')
   const [editFreq, setEditFreq] = useState('60')
-  const formRef = useRef<HTMLFormElement>(null)
 
   const startEdit = (dev: LoraDevice) => { setEditingAddr(dev.dev_addr); setEditName(dev.name || ''); setEditType(dev.device_type); setEditFreq(String(dev.refresh_freq_s ?? 60)) }
   const cancelEdit = () => setEditingAddr(null)
@@ -802,18 +793,6 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate
 
   return (
     <div className="space-y-4">
-      <form ref={formRef} onSubmit={e => { e.preventDefault(); const f = e.currentTarget; onCreate({ dev_addr: (f.elements.namedItem('dev_addr') as HTMLInputElement).value, name: (f.elements.namedItem('dev_name') as HTMLInputElement).value, dev_eui: (f.elements.namedItem('dev_eui') as HTMLInputElement).value, device_type: (f.elements.namedItem('dev_type') as HTMLSelectElement).value, gateway_id: (f.elements.namedItem('dev_gw') as HTMLInputElement).value, refresh_freq_s: Number((f.elements.namedItem('dev_freq') as HTMLInputElement).value) || 60 }); f.reset() }}
-        className="card p-4 flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[130px]"><label className="block text-xs text-slate-400 mb-1">DevAddr *</label><input name="dev_addr" required placeholder="26012345" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" /></div>
-        <div className="flex-1 min-w-[100px]"><label className="block text-xs text-slate-400 mb-1">Nombre</label><input name="dev_name" placeholder="Collar 01" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
-        <div className="w-[100px]"><label className="block text-xs text-slate-400 mb-1">Tipo</label><select name="dev_type" className="w-full bg-surface-800 border border-surface-700 rounded px-2 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
-          {['sensor','collar','tag','tanque','humedad','animal','gateway','other'].map(t => <option key={t} value={t}>{t}</option>)}
-        </select></div>
-        <div className="w-[75px]"><label className="block text-xs text-slate-400 mb-1">Freq (s)</label><input name="dev_freq" type="number" defaultValue="60" min="5" className="w-full bg-surface-800 border border-surface-700 rounded px-2 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
-        <div className="flex-1 min-w-[100px]"><label className="block text-xs text-slate-400 mb-1">Gateway ID</label><input name="dev_gw" placeholder="GW-001" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" /></div>
-        <button type="submit" disabled={creating} className="btn-primary flex items-center gap-1.5 text-sm h-10"><Plus size={14} />{creating ? 'Registrando...' : 'Registrar'}</button>
-      </form>
-
       {/* Banner: dispositivos pendientes de pairing */}
       {pendingDevices && pendingDevices.length > 0 && (
         <div className="card p-4 border border-warning/40 bg-warning/5">
