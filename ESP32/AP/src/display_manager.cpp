@@ -91,21 +91,50 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
         ? (int32_t)((expiresEpoch - now) / 60)
         : 0;
 
-    // 4 lineas disponibles en OLED 160x80:
-    //   L1: PAIRING + mins restantes
-    //   L2: ID del gateway
-    //   L3: primera mitad del codigo
-    //   L4: segunda mitad del codigo
-    _l1 = "** PAIRING **  " + String(minsLeft) + "m";
+    // Render directo al OLED para evitar throttling y mostrar el codigo
+    // de forma destacada (letra grande, fondo).
+    _tft.fillScreen(COL_BG);
+
+    // Header amarillo/cyan
+    _tft.setTextColor(COL_HDR, COL_BG);
+    _tft.setTextSize(1);
+    _tft.setCursor(VIEW_X + 20, VIEW_Y + 4);
+    _tft.print("PAIRING MODE");
+    _tft.setCursor(VIEW_X + 110, VIEW_Y + 4);
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.printf("%dm", minsLeft);
+    _tft.drawFastHLine(VIEW_X, VIEW_Y + 14, VIEW_W, COL_HDR);
+
+    // GW ID
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.setTextSize(1);
+    _tft.setCursor(VIEW_X + 2, VIEW_Y + 18);
+    _tft.print("ID:");
+    _tft.setTextColor(COL_TEXT, COL_BG);
+    _tft.print(gwId.substring(0, 16));
+
+    // Label "CODE:"
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.setCursor(VIEW_X + 2, VIEW_Y + 30);
+    _tft.print("CODE:");
+
+    // Codigo en 2 lineas, TAMANO 2 (16px de alto), ROJO para que destaque
+    _tft.setTextColor(TFT_RED, COL_BG);
+    _tft.setTextSize(2);
+    String part1 = code.length() >= 3 ? code.substring(0, 3) : code;
+    String part2 = code.length() >= 6 ? code.substring(3, 6) : "";
+    _tft.setCursor(VIEW_X + 6, VIEW_Y + 40);
+    _tft.print(part1);
+    _tft.setCursor(VIEW_X + 6, VIEW_Y + 58);
+    _tft.print(part2);
+
+    // Reset estado para no confundir a showStatus
+    _l1 = "PAIRING " + String(minsLeft) + "m";
     _l2 = "ID:" + gwId.substring(0, 16);
-    if (code.length() >= 6) {
-        _l3 = "Code: " + code.substring(0, 3);
-        _l4 = "      " + code.substring(3, 6);
-    } else {
-        _l3 = "Code: " + code;
-        _l4 = "";
-    }
-    _render();
+    _l3 = "CODE: " + part1;
+    _l4 = "      " + part2;
+    _lastUpdate = millis();   // evitar que showStatus sobrescriba
+    _clearRightEdge();
 }
 
 void DisplayManager::showPaired(const String& gwId, const String& name) {
@@ -154,8 +183,9 @@ void DisplayManager::_rawFillWindow(uint16_t xs, uint16_t ys,
 }
 
 void DisplayManager::_render() {
+    // Forzar render siempre (era throttled a 100ms, pero impedia que el
+    // codigo de pairing apareciera si showStatus se habia llamado recientemente)
     uint32_t now = millis();
-    if (now - _lastUpdate < OLED_UPDATE_MS) return;
     _lastUpdate = now;
 
     _tft.fillScreen(COL_BG);

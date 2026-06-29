@@ -30,6 +30,7 @@ static bool wifiOK = false;
 static uint32_t  _lastSyncMs        = 0;
 static int32_t   _lastSyncLatencyMs = -1;
 static bool      _isProvisioned     = false;
+static uint32_t  _lastDispRefresh   = 0;
 
 // ── Contadores / reset diario via NTP ─────────────────────────
 static int32_t   _todayDayNum       = -1;   // día UTC actual (time/86400), -1 = sin NTP
@@ -108,6 +109,9 @@ static void doGatewaySync() {
             Serial.printf("[Provision] Estado actualizado: %s\n",
                           _isProvisioned ? "PROVISIONADO" : "SIN PROVISIONAR");
         }
+    }
+    if (!gwCfg.isPaired && gwCfg.pairingCode.length() > 0) {
+        _lastDispRefresh = 0;
     }
     _lastSyncMs = millis();
 }
@@ -237,16 +241,30 @@ void setup() {
     }
 
 // 7 ── Pairing: si el GW nunca fue registrado en la app, activar pairing ────
-    if (!gwCfg.isPaired &&
-        (gwCfg.pairingCode.isEmpty() || !cfgMgr.isPairingCodeValid(gwCfg))) {
-        cfgMgr.startPairing(gwCfg);
-        Serial.printf("[Pairing] Codigo generado automaticamente: %s (expira %lu)\n",
-                      gwCfg.pairingCode.c_str(),
-                      (unsigned long)gwCfg.pairingExpiresAt);
+    if (!gwCfg.isPaired) {
+        bool needsRegen = gwCfg.pairingCode.isEmpty()
+                          || !cfgMgr.isPairingCodeValid(gwCfg);
+        if (needsRegen) {
+            cfgMgr.startPairing(gwCfg);
+            Serial.printf("[Pairing] Codigo generado automaticamente: %s (expira %lu)\n",
+                          gwCfg.pairingCode.c_str(),
+                          (unsigned long)gwCfg.pairingExpiresAt);
+        } else {
+            Serial.printf("[Pairing] Reutilizando codigo existente: %s (expira %lu)\n",
+                          gwCfg.pairingCode.c_str(),
+                          (unsigned long)gwCfg.pairingExpiresAt);
+        }
     }
 
-    // 8 ── Estado final ────────────────────────────────────────
-    {
+    // 8 ── Estado final: si no esta emparejado, mostrar el codigo de pairing YA
+    //     (sin esperar 5s del refresco periodico del loop)
+    Serial.printf("[Display] isPaired=%d code='%s' valid=%d\n",
+                  gwCfg.isPaired,
+                  gwCfg.pairingCode.c_str(),
+                  cfgMgr.isPairingCodeValid(gwCfg));
+    if (!gwCfg.isPaired && gwCfg.pairingCode.length() > 0) {
+        display.showPairing(gwCfg.gatewayId, gwCfg.pairingCode, gwCfg.pairingExpiresAt);
+    } else {
         String l1   = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
                       + "  " + wifiMgr.getLocalIP();
         String l2   = gwCfg.gatewayId;
@@ -264,7 +282,6 @@ void setup() {
 // ─────────────────────────────────────────────────────────────
 // loop()
 // ─────────────────────────────────────────────────────────────
-static uint32_t _lastDispRefresh = 0;
 static uint32_t _btnPressStart   = 0;
 static bool     _btnWasPressed   = false;
 static bool     _btnLongReset    = false;   // true = ya se disparó el reset largo
@@ -340,7 +357,15 @@ if (held >= 10000) {
     // ── Refresco periódico pantalla cada 5 s ──────────────────
     if (millis() - _lastDispRefresh >= 5000) {
         _lastDispRefresh = millis();
-// Si aún no fue registrado, dar prioridad a mostrar el código de pairing.
+        // Si no esta registrado pero el codigo expiro o no existe, regenerar YA
+        if (!gwCfg.isPaired &&
+            (gwCfg.pairingCode.isEmpty() || !cfgMgr.isPairingCodeValid(gwCfg))) {
+            cfgMgr.startPairing(gwCfg);
+            Serial.printf("[Pairing] Codigo regenerado: %s (expira %lu)\n",
+                          gwCfg.pairingCode.c_str(),
+                          (unsigned long)gwCfg.pairingExpiresAt);
+        }
+        // Mostrar codigo de pairing si esta disponible
         if (!gwCfg.isPaired &&
             gwCfg.pairingCode.length() > 0 &&
             cfgMgr.isPairingCodeValid(gwCfg)) {
