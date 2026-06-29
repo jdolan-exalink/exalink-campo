@@ -483,8 +483,12 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
 
   const submitAdd = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!addGwId.trim() || !addCode.trim() || !addName.trim()) return
-    onPair({ gateway_id: addGwId.trim(), pairing_code: addCode.trim(), name: addName.trim() })
+    if (!addCode.trim()) return
+    onPair({
+      gateway_id: addGwId.trim(),       // opcional: si vino del banner, lo manda
+      pairing_code: addCode.trim(),
+      name: addName.trim(),              // opcional: si vacío, backend usa el GW ID
+    })
   }
 
   return (
@@ -649,8 +653,9 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
               <div className="flex-1">
                 <h3 className="text-base font-semibold text-white">Agregar nuevo Gateway</h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Para registrar un gateway necesitas el codigo de pairing de 6 digitos
-                  que muestra el dispositivo fisico en su pantalla o portal web.
+                  Ingresa el codigo de pairing que muestra el gateway en su pantalla
+                  o portal web. El sistema detecta automaticamente que gateway se esta
+                  emparejando.
                 </p>
               </div>
               <button type="button" onClick={closeAdd} className="text-slate-400 hover:text-white shrink-0">
@@ -666,45 +671,52 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
               <p><span className="text-brand-400 font-mono">3.</span> El codigo vence en 10 minutos. Si expira, pulsa <em>Regenerar codigo</em>.</p>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
-                  Gateway ID <span className="text-danger">*</span>
-                </label>
-                <input value={addGwId} onChange={e => setAddGwId(e.target.value)} required
-                  placeholder="ABCD12345678 (16 caracteres hex)"
-                  className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Lo encontras en la pantalla del gateway, en el portal web, o en la etiqueta del equipo.
+            {/* GW ID detectado automáticamente (si vino del banner) */}
+            {addGwId && (
+              <div className="bg-field/10 border border-field/30 rounded-lg p-3 mb-4 text-xs">
+                <div className="flex items-center gap-2 text-field">
+                  <Check size={13} />
+                  <span className="font-semibold">Gateway detectado</span>
+                </div>
+                <p className="text-slate-300 mt-1">
+                  ID: <span className="font-mono text-white">{addGwId}</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  El codigo debe corresponder a este gateway.
                 </p>
               </div>
+            )}
 
+            <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
                   Codigo de Pairing <span className="text-danger">*</span>
                 </label>
-                <input value={addCode} onChange={e => setAddCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required
+                <input value={addCode} onChange={e => setAddCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required autoFocus
                   placeholder="123456" maxLength={6} inputMode="numeric"
                   className="w-full bg-surface-800 border-2 border-surface-700 rounded-lg px-3 py-3 text-2xl text-white font-mono tracking-[0.4em] text-center focus:outline-none focus:border-brand-500" />
                 <p className="text-[11px] text-slate-500 mt-1">
-                  6 digitos que muestra el gateway en su pantalla. Vence en 10 minutos.
+                  6 digitos que muestra el gateway en su pantalla.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
-                  Nombre para identificar <span className="text-danger">*</span>
+                  Nombre <span className="text-slate-500 font-normal normal-case">(opcional)</span>
                 </label>
-                <input value={addName} onChange={e => setAddName(e.target.value)} required
-                  placeholder="Gateway Norte - Potrero 3"
+                <input value={addName} onChange={e => setAddName(e.target.value)}
+                  placeholder={addGwId ? 'Se usara el ID si lo dejas vacio' : 'Se usara el ID del gateway si lo dejas vacio'}
                   className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Si lo dejas vacio, se asignara automaticamente el ID del gateway.
+                </p>
               </div>
             </div>
 
             <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-surface-700">
               <button type="button" onClick={closeAdd} className="btn-secondary text-sm">Cancelar</button>
               <button type="submit"
-                disabled={pairing || !addGwId.trim() || !addCode.trim() || !addName.trim()}
+                disabled={pairing || !addCode.trim()}
                 className="btn-primary text-sm flex items-center gap-1.5">
                 {pairing
                   ? <><RefreshCw size={13} className="animate-spin" />Registrando...</>
