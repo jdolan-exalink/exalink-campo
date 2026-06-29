@@ -51,10 +51,6 @@ export default function Lora() {
   })
 
   const [addGwOpen, setAddGwOpen] = useState(false)
-  const [addDevOpen, setAddDevOpen] = useState(false)
-  const [addDevAddr, setAddDevAddr] = useState('')
-  const [addDevName, setAddDevName] = useState('')
-  const [addDevCode, setAddDevCode] = useState('')
 
   const { data: devicesData, isLoading: devLoading } = useQuery<{ devices: LoraDevice[] }>({
     queryKey: ['lora-devices'],
@@ -184,13 +180,12 @@ export default function Lora() {
   })
 
   const pairDeviceMutation = useMutation({
-    mutationFn: (payload: { dev_addr: string; pairing_code: string; name: string }) =>
-      api.post('/lora/device/pair', payload),
+    mutationFn: (payload: { dev_addr: string; name?: string }) =>
+      api.post('/lora/devices/pair', payload),
     onSuccess: (res) => {
       const data = res?.data
       if (data?.ok) {
         toast.success(`Dispositivo "${data.name}" registrado`)
-        setAddDevOpen(false)
       } else {
         toast.error(data?.msg || 'Error al registrar dispositivo')
       }
@@ -310,14 +305,7 @@ export default function Lora() {
             onUpdate={(d) => updateDeviceMutation.mutate(d)}
             onPair={(d) => pairDeviceMutation.mutate(d)}
             creating={createDeviceMutation.isPending}
-            addDevOpen={addDevOpen}
-            setAddDevOpen={setAddDevOpen}
-            addDevAddr={addDevAddr}
-            setAddDevAddr={setAddDevAddr}
-            addDevName={addDevName}
-            setAddDevName={setAddDevName}
-            addDevCode={addDevCode}
-            setAddDevCode={setAddDevCode}
+            pairing={pairDeviceMutation.isPending}
           />
         )}
 
@@ -793,15 +781,12 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
 
 // ── Devices Tab ───────────────────────────────────────────────────
 
-function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate, onDelete, onUpdate, onPair, creating, addDevOpen, setAddDevOpen, addDevAddr, setAddDevAddr, addDevName, setAddDevName, addDevCode, setAddDevCode }: {
+function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate, onDelete, onUpdate, onPair, creating, pairing }: {
   devices: LoraDevice[]; pendingDevices: LoraPendingDevice[]; loading: boolean; pendingLoading: boolean;
   onCreate: (d: Partial<LoraDevice>) => void; onDelete: (id: string, name?: string | null) => void;
   onUpdate: (d: { dev_addr: string; name?: string; device_type?: string; refresh_freq_s?: number }) => void;
-  onPair: (d: { dev_addr: string; pairing_code: string; name: string }) => void;
-  creating: boolean; addDevOpen: boolean; setAddDevOpen: (v: boolean) => void;
-  addDevAddr: string; setAddDevAddr: (v: string) => void;
-  addDevName: string; setAddDevName: (v: string) => void;
-  addDevCode: string; setAddDevCode: (v: string) => void;
+  onPair: (d: { dev_addr: string; name?: string }) => void;
+  creating: boolean; pairing: boolean;
 }) {
   const [editingAddr, setEditingAddr] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
@@ -843,8 +828,8 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-white mb-1">Dispositivos pendientes de registro</p>
               <p className="text-xs text-slate-400 mb-3">
-                {pendingDevices.length} dispositivo{pendingDevices.length !== 1 ? 's' : ''} con codigo de pairing activo.
-                Hace clic en <strong>Emparejar</strong> y completa el codigo para registrarlo.
+                {pendingDevices.length} dispositivo{pendingDevices.length !== 1 ? 's' : ''} detectado{pendingDevices.length !== 1 ? 's' : ''} por LoRa.
+                Hace clic en <strong>Emparejar</strong> para registrarlo.
               </p>
               <div className="space-y-2">
                 {pendingLoading ? (
@@ -857,52 +842,15 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onCreate
                         {p.name && <span>{p.name}</span>}
                         {p.battery_pct != null && <span>{p.battery_pct.toFixed(0)}%</span>}
                         {p.last_seen && <span>visto {formatDateTime(p.last_seen)}</span>}
-                        {p.pairing_expires_at && (
-                          <span className="text-warning">expira {formatDateTime(p.pairing_expires_at)}</span>
-                        )}
                       </p>
                     </div>
-                    <button onClick={() => { setAddDevAddr(p.dev_addr); setAddDevName(p.name || ''); setAddDevCode(''); setAddDevOpen(true) }} className="btn-primary text-xs flex items-center gap-1.5 shrink-0">
-                      <KeyRound size={12} />Emparejar
+                    <button onClick={() => onPair({ dev_addr: p.dev_addr, name: p.name || undefined })} disabled={pairing} className="btn-primary text-xs flex items-center gap-1.5 shrink-0">
+                      <KeyRound size={12} />{pairing ? '...' : 'Emparejar'}
                     </button>
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Emparejar dispositivo */}
-      {addDevOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-900 border border-surface-700 rounded-xl p-6 w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                <KeyRound size={18} className="text-warning" />
-                Emparejar Dispositivo
-              </h3>
-              <button onClick={() => setAddDevOpen(false)} className="text-slate-400 hover:text-white p-1"><X size={18} /></button>
-            </div>
-            <form onSubmit={e => { e.preventDefault(); if (!addDevCode.trim()) return; onPair({ dev_addr: addDevAddr, pairing_code: addDevCode.trim(), name: addDevName.trim() }) }} className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">DevAddr</label>
-                <input value={addDevAddr} onChange={e => setAddDevAddr(e.target.value)} placeholder="8458E89E139C" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Nombre (opcional)</label>
-                <input value={addDevName} onChange={e => setAddDevName(e.target.value)} placeholder="Collar 01" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Codigo de Pairing *</label>
-                <input value={addDevCode} onChange={e => setAddDevCode(e.target.value)} placeholder="123456" required maxLength={6} className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-lg text-white font-mono text-center tracking-[0.3em] focus:outline-none focus:border-brand-500" />
-                <p className="text-[10px] text-slate-500 mt-1">Ingresa el codigo de 6 digitos que muestra el dispositivo en su pantalla</p>
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setAddDevOpen(false)} className="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancelar</button>
-                <button type="submit" disabled={!addDevCode.trim()} className="btn-primary px-4 py-2 text-sm">Registrar</button>
-              </div>
-            </form>
           </div>
         </div>
       )}

@@ -917,6 +917,73 @@ async def get_device_consumption(
         return {"dev_addr": dev_addr, "samples": 0, "msg": "Error al calcular consumo"}
 
 
+@router.get("/devices/pending")
+async def get_pending_devices():
+    try:
+        conn = _get_db()
+        rows = conn.execute("""
+            SELECT d.dev_addr, d.name, d.device_type, d.pairing_code,
+                   d.pairing_expires_at, d.last_seen, d.battery_pct,
+                   d.temperature, d.created_at, d.is_paired
+            FROM devices d
+            WHERE COALESCE(d.is_paired, 0) = 0
+              AND d.pairing_code IS NOT NULL
+              AND d.pairing_expires_at IS NOT NULL
+              AND d.pairing_expires_at > datetime('now')
+            ORDER BY d.pairing_expires_at ASC
+        """).fetchall()
+        conn.close()
+        return {"devices": [dict(r) for r in rows]}
+    except Exception:
+        return {"devices": []}
+
+
+@router.post("/devices/pair")
+async def pair_device(payload: dict = Body(...)):
+    try:
+        dev_addr = (payload.get("dev_addr") or "").strip()
+        name = (payload.get("name") or "").strip()
+
+        if not dev_addr:
+            return {"ok": False, "msg": "dev_addr requerido"}
+
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT dev_addr, pairing_code, pairing_expires_at, is_paired, name "
+            "FROM devices WHERE dev_addr = ?",
+            (dev_addr,),
+        ).fetchone()
+
+        if not row:
+            conn.close()
+            return {"ok": False, "msg": "Dispositivo no encontrado"}
+
+        if row["is_paired"]:
+            conn.close()
+            return {"ok": False, "msg": "El dispositivo ya esta registrado"}
+
+        final_name = name if name else (row["name"] or dev_addr)
+
+        conn.execute(
+            """
+            UPDATE devices
+               SET is_paired = 1,
+                   name = ?,
+                   pairing_code = NULL,
+                   pairing_expires_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP,
+                   last_seen = CURRENT_TIMESTAMP
+             WHERE dev_addr = ?
+            """,
+            (final_name, dev_addr),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "dev_addr": dev_addr, "name": final_name}
+    except Exception as e:
+        return {"ok": False, "msg": f"Error al emparejar: {e}"}
+
+
 @router.post("/devices")
 async def create_device(payload: dict = Body(...)):
     try:
