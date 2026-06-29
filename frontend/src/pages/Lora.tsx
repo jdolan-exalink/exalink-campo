@@ -692,11 +692,31 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
                   Codigo de Pairing <span className="text-danger">*</span>
                 </label>
-                <input value={addCode} onChange={e => setAddCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required autoFocus
-                  placeholder="123456" maxLength={6} inputMode="numeric"
-                  className="w-full bg-surface-800 border-2 border-surface-700 rounded-lg px-3 py-3 text-2xl text-white font-mono tracking-[0.4em] text-center focus:outline-none focus:border-brand-500" />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  6 digitos que muestra el gateway en su pantalla.
+                <div className="flex items-center justify-center gap-3">
+                  <input
+                    value={addCode.slice(0, 3)}
+                    onChange={e => {
+                      const v = e.target.value.replace(/\D/g, '').slice(0, 3);
+                      setAddCode(v + addCode.slice(3));
+                      if (v.length === 3) document.getElementById('pair_code_b')?.focus();
+                    }}
+                    required inputMode="numeric" autoFocus placeholder="123"
+                    className="w-24 bg-surface-800 border-2 border-surface-700 rounded-lg px-2 py-3 text-2xl text-white font-mono tracking-[0.3em] text-center focus:outline-none focus:border-brand-500"
+                  />
+                  <span className="text-2xl text-slate-500">-</span>
+                  <input
+                    id="pair_code_b"
+                    value={addCode.slice(3, 6)}
+                    onChange={e => {
+                      const v = e.target.value.replace(/\D/g, '').slice(0, 3);
+                      setAddCode(addCode.slice(0, 3) + v);
+                    }}
+                    required inputMode="numeric" placeholder="456" maxLength={3}
+                    className="w-24 bg-surface-800 border-2 border-surface-700 rounded-lg px-2 py-3 text-2xl text-white font-mono tracking-[0.3em] text-center focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5 text-center">
+                  6 digitos en 2 grupos de 3, como muestra el gateway.
                 </p>
               </div>
 

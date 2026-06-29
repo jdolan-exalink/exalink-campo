@@ -772,28 +772,45 @@ async def clear_data():
 
 @router.get("/stream")
 async def stream_packets():
+    import json as _json
+
+    def _query_new(last_id: int | None) -> tuple[int | None, list[dict]]:
+        conn = _get_db()
+        try:
+            if last_id is None:
+                row = conn.execute("SELECT MAX(id) as mx FROM packets").fetchone()
+                return (row["mx"] or 0), []
+            rows = conn.execute(
+                "SELECT p.*, g.name AS gateway_name, d.name AS device_name "
+                "FROM packets p "
+                "LEFT JOIN gateways g ON p.gateway_id = g.gateway_id "
+                "LEFT JOIN devices d ON p.dev_addr = d.dev_addr "
+                "WHERE p.id > ? ORDER BY p.id ASC", (last_id,)
+            ).fetchall()
+            return None, [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     async def event_generator():
         last_id = None
+        import time as _time
+        last_ping = _time.time()
         while True:
             try:
-                conn = _get_db()
-                if last_id is None:
-                    row = conn.execute("SELECT MAX(id) as mx FROM packets").fetchone()
-                    last_id = row["mx"] or 0
-                else:
-                    rows = conn.execute(
-                        "SELECT p.*, g.name AS gateway_name, d.name AS device_name "
-                        "FROM packets p "
-                        "LEFT JOIN gateways g ON p.gateway_id = g.gateway_id "
-                        "LEFT JOIN devices d ON p.dev_addr = d.dev_addr "
-                        "WHERE p.id > ? ORDER BY p.id ASC", (last_id,)
-                    ).fetchall()
-                    for r in rows:
-                        data = dict(r)
-                        last_id = r["id"]
-                        yield f"data: {__import__('json').dumps(data)}\n\n"
-                conn.close()
+                new_last, rows = await asyncio.to_thread(_query_new, last_id)
+                if new_last is not None:
+                    last_id = new_last
+                for data in rows:
+                    last_id = data["id"]
+                    yield f"data: {_json.dumps(data, default=str)}\n\n"
+                    last_ping = _time.time()
+                # Comentario keep-alive para que nginx/proxy no maten la conexion
+                if _time.time() - last_ping > 15:
+                    yield ": keepalive\n\n"
+                    last_ping = _time.time()
                 await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
             except Exception:
                 await asyncio.sleep(2)
 
