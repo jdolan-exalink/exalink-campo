@@ -13,6 +13,8 @@ import Weights from '@/pages/Weights'
 import MapPage from '@/pages/MapPage'
 import NOC from '@/pages/NOC'
 import Lora from '@/pages/Lora'
+import Campo from '@/pages/Campo'
+import WaterPoints from '@/pages/WaterPoints'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)()
@@ -44,6 +46,8 @@ export default function App() {
           <Route path="map" element={<MapPage />} />
           <Route path="noc" element={<NOC />} />
           <Route path="lora" element={<Lora />} />
+          <Route path="campo" element={<Campo />} />
+          <Route path="water-points" element={<WaterPoints />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -66,11 +66,20 @@
 
 // ============================================================
 // Servidor HTTP — valores por defecto
+// La URL se define en platformio.ini como build flag (-DSERVER_DEFAULT_URL).
+// Soporta http:// (lab/IP) y https:// (dominio/prod) automáticamente.
+// Fallback solo si no viene del build system (compilación fuera de PIO).
 // ============================================================
-#define SERVER_DEFAULT_URL  "https://10.1.1.100:6666"
+#ifndef SERVER_DEFAULT_URL
+#define SERVER_DEFAULT_URL  "https://campo.exalink.com.ar"
+#endif
 #define SERVER_ENDPOINT     "/api/lora/ingest"
 #define HTTP_TIMEOUT_MS     5000
 #define LORAWAN_LISTEN_PORT_DEFAULT  6666
+
+// Provisioning
+#define PROVISION_ENDPOINT          "/api/v1/provision/"
+#define PROVISION_RESET_SUFFIX      ""   // DELETE {PROVISION_ENDPOINT}{code}
 
 // ============================================================
 // LoRaWAN — valores por defecto
@@ -124,6 +133,7 @@
 #define NVS_KEY_IS_PAIRED     "paired"
 #define NVS_KEY_PAIR_CODE     "pair_code"
 #define NVS_KEY_PAIR_EXP      "pair_exp"
+#define NVS_KEY_IS_PROVISIONED "is_prov"
 
 // ============================================================
 // Misc

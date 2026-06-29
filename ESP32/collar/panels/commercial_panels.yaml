@@ -1,0 +1,20 @@
+panels:
+  panel_70x35:
+    description: Commercial solar panel 70 x 35 mm
+    length: 70
+    width: 35
+    thickness: 2.0
+    nominal_voltage: 5.0
+  panel_80x40:
+    description: Commercial solar panel 80 x 40 mm
+    length: 80
+    width: 40
+    thickness: 2.2
+    nominal_voltage: 5.0
+  panel_90x50:
+    description: Commercial solar panel 90 x 50 mm
+    length: 90
+    width: 50
+    thickness: 2.4
+    nominal_voltage: 5.0
+

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 import uuid
 from app.models.device import DeviceType
@@ -29,8 +29,8 @@ class DeviceUpdate(BaseModel):
 
 class DeviceResponse(DeviceBase):
     id: uuid.UUID
-    tenant_id: uuid.UUID
-    establishment_id: uuid.UUID
+    tenant_id: uuid.UUID | None
+    establishment_id: uuid.UUID | None
     animal_id: uuid.UUID | None
     battery_pct: int | None
     rssi: int | None
@@ -41,11 +41,44 @@ class DeviceResponse(DeviceBase):
     last_lat: float | None = None
     last_lon: float | None = None
     is_active: bool
+    provision_code: str | None = None
+    is_provisioned: bool = False
     created_at: datetime
     animal_ear_tag: str | None = None
 
     model_config = {"from_attributes": True}
 
+
+# ── NOC inventory creation ─────────────────────────────────────────────────────
+
+class NocDeviceCreate(BaseModel):
+    device_uid: str                    # Heltec chip ID, e.g. "A4CF12ABCDEF"
+    device_type: DeviceType
+    name: str | None = None
+    firmware: str | None = None
+    provision_code: str | None = None  # auto-derived from device_uid if omitted
+
+
+# ── Provisioning ───────────────────────────────────────────────────────────────
+
+class ProvisionLookupResponse(BaseModel):
+    provision_code: str
+    device_uid: str
+    device_type: str
+    firmware: str | None
+    is_provisioned: bool
+
+
+class ProvisionClaimRequest(BaseModel):
+    establishment_id: uuid.UUID
+    name: str | None = None
+
+
+class ProvisionResetRequest(BaseModel):
+    device_uid: str  # device proves ownership
+
+
+# ── MQTT ──────────────────────────────────────────────────────────────────────
 
 class MQTTLocationPayload(BaseModel):
     device_id: str

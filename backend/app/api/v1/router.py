@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.api.v1 import auth, animals, paddocks, devices, alerts, dashboard
-from app.api.v1 import establishments, health, reproduction, weights, noc, import_data, lora
+from app.api.v1 import establishments, health, reproduction, weights, noc, import_data, lora, provision
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -17,3 +17,4 @@ api_router.include_router(weights.router)
 api_router.include_router(noc.router)
 api_router.include_router(import_data.router)
 api_router.include_router(lora.router)
+api_router.include_router(provision.router)

@@ -24,13 +24,13 @@ void ConfigManager::load(GatewayConfig& cfg) {
         cfg.isPaired        = false;
         cfg.pairingCode     = "";
         cfg.pairingExpiresAt = 0;
+        cfg.isProvisioned   = false;
         save(cfg);
         // NVS_KEY_INIT ya lo escribe save()
     } else {
         cfg.wifiSsid    = _prefs.getString(NVS_KEY_SSID,      WIFI_DEFAULT_SSID);
         cfg.wifiPass    = _prefs.getString(NVS_KEY_PASS,      WIFI_DEFAULT_PASS);
         cfg.serverUrl   = _prefs.getString(NVS_KEY_SERVER,    SERVER_DEFAULT_URL);
-        cfg.gatewayId   = _prefs.getString(NVS_KEY_GW_ID,     generateGatewayId());
         cfg.loraFreq    = _prefs.getFloat(NVS_KEY_FREQ,       LORA_FREQ_DEFAULT);
         cfg.lorawanPass     = _prefs.getString(NVS_KEY_LORA_PASS,    LORAWAN_DEFAULT_PASS);
         cfg.listenPort      = _prefs.getUShort(NVS_KEY_LISTEN_PORT,  LORAWAN_LISTEN_PORT_DEFAULT);
@@ -41,26 +41,17 @@ void ConfigManager::load(GatewayConfig& cfg) {
         cfg.isPaired        = _prefs.getBool(NVS_KEY_IS_PAIRED, false);
         cfg.pairingCode     = _prefs.getString(NVS_KEY_PAIR_CODE, "");
         cfg.pairingExpiresAt = _prefs.getUInt(NVS_KEY_PAIR_EXP, 0);
+        cfg.isProvisioned   = _prefs.getBool(NVS_KEY_IS_PROVISIONED,  false);
 
-        // Migración: reparar adminPass corrupto ("null" literal de ArduinoJson)
+        // Gateway ID: always derived from chip ID — ignore stored random IDs
+        cfg.gatewayId = generateGatewayId();
+        _prefs.putString(NVS_KEY_GW_ID, cfg.gatewayId);
+
+        // Fix: corrupt admin password
         if (cfg.adminPass == "null" || cfg.adminPass.isEmpty()) {
             cfg.adminPass = ADMIN_DEFAULT_PASS;
             _prefs.putString(NVS_KEY_ADMIN_PASS, cfg.adminPass);
             Serial.println("[Config] Contraseña admin reparada a default.");
-        }
-
-        // Migración: regenerar IDs del formato viejo "GW-XXXX" (< 16 chars)
-        if (cfg.gatewayId.length() < 16) {
-            cfg.gatewayId = generateGatewayId();
-            _prefs.putString(NVS_KEY_GW_ID, cfg.gatewayId);
-            Serial.printf("[Config] ID migrado al nuevo formato: %s\n", cfg.gatewayId.c_str());
-        }
-
-        // Migración: actualizar URL vieja al nuevo default
-        if (cfg.serverUrl == "http://192.168.1.100:8080") {
-            cfg.serverUrl = SERVER_DEFAULT_URL;
-            _prefs.putString(NVS_KEY_SERVER, cfg.serverUrl);
-            Serial.println("[Config] URL migrada al nuevo servidor.");
         }
     }
 }
@@ -85,6 +76,7 @@ void ConfigManager::save(const GatewayConfig& cfg) {
     _prefs.putBool(NVS_KEY_IS_PAIRED,       cfg.isPaired);
     _prefs.putString(NVS_KEY_PAIR_CODE,     cfg.pairingCode);
     _prefs.putUInt(NVS_KEY_PAIR_EXP,        cfg.pairingExpiresAt);
+    _prefs.putBool(NVS_KEY_IS_PROVISIONED,  cfg.isProvisioned);
     _prefs.putBool(NVS_KEY_INIT,         true);
     _prefs.end();
 
@@ -99,6 +91,13 @@ void ConfigManager::save(const GatewayConfig& cfg) {
     }
 }
 
+void ConfigManager::saveProvisionState(bool provisioned) {
+    _prefs.begin(NVS_NAMESPACE, false);
+    _prefs.putBool(NVS_KEY_IS_PROVISIONED, provisioned);
+    _prefs.end();
+    Serial.printf("[Config] isProvisioned guardado: %s\n", provisioned ? "true" : "false");
+}
+
 void ConfigManager::reset() {
     _prefs.begin(NVS_NAMESPACE, false);
     _prefs.clear();
@@ -107,10 +106,23 @@ void ConfigManager::reset() {
 }
 
 String ConfigManager::generateGatewayId() {
-    uint32_t r1 = esp_random();
-    uint32_t r2 = esp_random();
-    char buf[18];
-    snprintf(buf, sizeof(buf), "%08X%08X", r1, r2);
+    // Use full 48-bit MAC as 12-char hex — deterministic, survives resets
+    uint64_t mac = ESP.getEfuseMac();
+    char buf[13];
+    snprintf(buf, sizeof(buf), "%04X%08X",
+             (uint16_t)((mac >> 32) & 0xFFFF),
+             (uint32_t)(mac & 0xFFFFFFFF));
+    return String(buf);
+}
+
+String ConfigManager::generateProvisionCode() {
+    // Lower 32 bits of MAC → "XXXX-XXXX"
+    uint64_t mac = ESP.getEfuseMac();
+    uint32_t lower = (uint32_t)(mac & 0xFFFFFFFF);
+    char buf[10];
+    snprintf(buf, sizeof(buf), "%04X-%04X",
+             (uint16_t)(lower >> 16),
+             (uint16_t)(lower & 0xFFFF));
     return String(buf);
 }
 

@@ -1,0 +1,178 @@
+project:
+  name: EXA Collar
+  revision: V3
+  units: mm
+
+neck:
+  radius: 170
+  neck_radius_mm: 170
+  module_angle_deg: 42
+  flexible_link_angle_deg: 46
+
+animal:
+  neck_radius_mm: 170
+
+manufacturing:
+  process: fdm_to_injection_ready
+  nozzle: 0.4
+  layer_height: 0.24
+  wall_thickness: 3.0
+  floor_thickness: 3.0
+  corner_radius: 8.0
+  draft_angle_deg: 1.5
+  minimum_rib_thickness: 2.2
+
+fasteners:
+  lid_screw: M3x12 A4 stainless
+  insert: M3 heat-set insert OD 4.6 x L 5.7
+  screw_clearance_diameter: 3.4
+  insert_boss_diameter: 7.6
+  boss_height: 9.0
+
+seal:
+  o_ring_section: 2.0
+  channel_width: 2.5
+  channel_depth: 1.45
+  target_compression: 0.20
+  centering_rib_height: 1.2
+  centering_rib_width: 1.6
+  compression_limiter_height: 1.8
+
+strap:
+  width: 40
+  supported_widths: [30, 35, 40, 50]
+  slot_clearance: 2.0
+  lug_thickness: 9.0
+  lug_radius: 7.0
+  rib_count: 3
+
+solar:
+  layout: dual
+  panel_catalog: panels/commercial_panels.yaml
+  selected_panel: panel_80x40
+  recess_depth: 2.0
+  protective_border: 1.2
+  adhesive_gap: 0.5
+  frame_height: 1.0
+  replacement_clearance: 0.8
+
+flexible_link:
+  selected_variant: watch_link_reinforced
+  available_variants:
+    - articulated_chain
+    - reinforced_tpu_band
+    - multi_hinge
+    - watch_link_reinforced
+    - hybrid_tpu_rigid_inserts
+  width: 32
+  thickness: 12
+  link_count: 7
+  pitch: 15
+  hinge_pin_diameter: 4.0
+  cable_channel_width: 9
+  cable_channel_height: 5
+  bend_relief_radius: 18
+  strain_relief_length: 18
+  attachment_overlap: 16
+  seal_gland_diameter: 11
+  mechanical_fuse_neck_width: 18
+
+cable_chain:
+  enabled: true
+  link_count: 7
+  link_width_mm: 28
+  link_length_mm: 18
+  link_height_mm: 12
+  internal_channel_width_mm: 12
+  internal_channel_height_mm: 5
+  wall_thickness_mm: 3
+  cover_thickness_mm: 2
+  pin_diameter_mm: 4
+  max_bend_angle_deg: 18
+  bend_stop_thickness_mm: 2.5
+  rib_thickness_mm: 2.4
+  rib_count: 3
+  top_cover_screw_diameter_mm: 2.4
+  metal_pin_option: A4 stainless removable pin
+  printed_pin_option: PA-CF printed pin
+  end_mount_length_mm: 24
+  end_mount_flange_width_mm: 42
+  end_mount_flange_height_mm: 18
+  end_mount_screw_diameter_mm: 3.4
+  end_mount_oring_section_mm: 2.0
+  grommet_outer_diameter_mm: 13
+  grommet_inner_width_mm: 12
+  strain_relief_length_mm: 22
+  strain_relief_clamp_screw_diameter_mm: 3.0
+  allowed_materials:
+    - Nylon
+    - PETG
+    - ASA
+    - reinforced_TPU
+    - rigid_links_with_flexible_or_stainless_pins
+
+counterweight:
+  enabled: true
+  selected_profile: stainless_180g
+  profiles:
+    stainless_120g:
+      mass_g: 120
+      material: stainless_steel
+      carrier_length: 62
+      carrier_width: 24
+      carrier_height: 12
+    stainless_180g:
+      mass_g: 180
+      material: stainless_steel
+      carrier_length: 76
+      carrier_width: 28
+      carrier_height: 14
+    tungsten_220g:
+      mass_g: 220
+      material: tungsten
+      carrier_length: 58
+      carrier_width: 26
+      carrier_height: 14
+    refillable_printed:
+      mass_g: 80
+      material: printed_refillable_module
+      carrier_length: 82
+      carrier_width: 30
+      carrier_height: 16
+  screw_clearance_diameter: 3.4
+
+modules:
+  electronics:
+    side: left
+    outer_length: 122
+    outer_width: 66
+    body_height: 31
+    lid_height: 8
+    internal_clearance_height: 23
+    service_note: Heltec, ESP32, GPS, LoRa, antennas, sensors and connectors are accessible from the top lid.
+    component_posts:
+      - name: Heltec Wireless Tracker
+        x: -32
+        y: -16
+        height: 12
+      - name: Auxiliary sensor bay
+        x: 30
+        y: 16
+        height: 10
+  battery:
+    side: right
+    outer_length: 122
+    outer_width: 66
+    body_height: 31
+    lid_height: 8
+    internal_clearance_height: 23
+    service_note: Battery pack, BMS, charger and power protection are accessible from the top lid.
+    component_posts:
+      - name: Battery tray front
+        x: -36
+        y: 0
+        height: 10
+      - name: Battery tray rear
+        x: 36
+        y: 0
+        height: 10

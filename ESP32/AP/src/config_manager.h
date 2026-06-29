@@ -2,13 +2,12 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include "config.h"
-
 struct GatewayConfig {
     String   wifiSsid;
     String   wifiPass;
     String   serverUrl;
-    String   gatewayId;
-    String   gatewayName;   // nombre asignado por el servidor (vacío si no tiene)
+    String   gatewayId;       // Derived from chip ID — deterministic across resets
+    String   gatewayName;
     float    loraFreq;
     String   lorawanPass;
     uint16_t listenPort;
@@ -18,6 +17,7 @@ struct GatewayConfig {
     bool     isPaired;          // true si fue registrado en la app
     String   pairingCode;       // código temporal (vacío si no está en pairing)
     uint32_t pairingExpiresAt;  // epoch time (segundos) de expiración del código
+    bool     isProvisioned;   // true once claimed by a tenant via the provision web
 };
 
 class ConfigManager {
@@ -35,13 +35,17 @@ public:
     void clearPairing(GatewayConfig& cfg);
     bool isPairingCodeValid(const GatewayConfig& cfg);
 
-    // Pending WiFi: guarda nuevas creds y respalda las actuales.
-    // En el próximo boot se prueban; si fallan se revierte solo.
+    // Chip-ID-based identifiers (deterministic — survive factory reset in the server)
+    static String generateProvisionCode(); // "XXXX-XXXX" from lower 32 bits of MAC
+
+    void saveProvisionState(bool provisioned);
+
+    // Pending WiFi rollback
     bool hasPendingWifi();
     void savePendingWifi(const String& newSsid, const String& newPass,
                          const String& oldSsid, const String& oldPass);
-    void commitPendingWifi();          // nueva red OK — limpia backup
-    void revertWifi(GatewayConfig& cfg); // nueva red falló — restaura backup
+    void commitPendingWifi();
+    void revertWifi(GatewayConfig& cfg);
 
 private:
     Preferences _prefs;

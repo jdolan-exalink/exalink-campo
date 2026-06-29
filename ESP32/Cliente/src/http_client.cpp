@@ -72,6 +72,7 @@ bool postEquipment(const String& serverUrl,
                    const String& wifiSsid, int wifiRssi,
                    float battery,
                    float temperature,
+                   float humidity,
                    uint32_t& outRefreshS,
                    String&   outName) {
     DynamicJsonDocument doc(512);
@@ -86,6 +87,11 @@ bool postEquipment(const String& serverUrl,
         doc["temperature"] = temperature;
     } else {
         doc["temperature"] = nullptr;
+    }
+    if (!isnan(humidity)) {
+        doc["humidity"] = humidity;
+    } else {
+        doc["humidity"] = nullptr;
     }
     if (gpsValid) {
         doc["lat"] = lat;

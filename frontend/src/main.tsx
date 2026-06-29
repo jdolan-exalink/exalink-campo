@@ -1,6 +1,12 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => { /* ignore in dev */ })
+  })
+}
 import { Toaster } from 'react-hot-toast'
 import App from './App'
 import './index.css'

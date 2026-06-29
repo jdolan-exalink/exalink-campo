@@ -1,0 +1,102 @@
+project:
+  name: EXA Collar
+  revision: V2
+  units: mm
+
+neck:
+  radius: 170
+  module_angle_deg: 42
+  bridge_angle_deg: 52
+
+manufacturing:
+  process: fdm
+  nozzle: 0.4
+  layer_height: 0.24
+  wall_thickness: 3.0
+  floor_thickness: 3.0
+  corner_radius: 8.0
+  draft_angle_deg: 1.5
+
+fasteners:
+  lid_screw: M3x12 stainless
+  insert: M3 heat-set insert OD 4.6 x L 5.7
+  screw_clearance_diameter: 3.4
+  insert_boss_diameter: 7.6
+  boss_height: 9.0
+
+seal:
+  o_ring_section: 2.0
+  channel_width: 2.5
+  channel_depth: 1.45
+  target_compression: 0.20
+
+strap:
+  width: 40
+  supported_widths: [30, 35, 40, 50]
+  slot_clearance: 2.0
+  lug_thickness: 8.0
+  lug_radius: 6.0
+
+solar:
+  layout: dual
+  panel_catalog: panels/commercial_panels.yaml
+  selected_panel: panel_80x40
+  recess_depth: 2.0
+  protective_border: 1.0
+  adhesive_gap: 0.5
+
+bridge:
+  version: rigid_printed
+  width: 28
+  height: 13
+  cable_channel_diameter: 8
+  attachment_overlap: 14
+  seal_gland_diameter: 11
+
+counterweight:
+  enabled: true
+  mass_target_g: 180
+  material_options:
+    - stainless_steel
+    - aluminum
+    - encapsulated_lead
+    - printed_body_with_metal_insert
+  carrier_length: 72
+  carrier_width: 26
+  carrier_height: 14
+  screw_clearance_diameter: 3.4
+
+modules:
+  electronics:
+    side: left
+    outer_length: 118
+    outer_width: 64
+    body_height: 30
+    lid_height: 7
+    internal_clearance_height: 22
+    component_posts:
+      - name: Heltec Wireless Tracker
+        x: -32
+        y: -16
+        height: 12
+      - name: Auxiliary sensor bay
+        x: 28
+        y: 16
+        height: 10
+  battery:
+    side: right
+    outer_length: 118
+    outer_width: 64
+    body_height: 30
+    lid_height: 7
+    internal_clearance_height: 22
+    component_posts:
+      - name: Battery tray front
+        x: -34
+        y: 0
+        height: 10
+      - name: Battery tray rear
+        x: 34
+        y: 0
+        height: 10
+

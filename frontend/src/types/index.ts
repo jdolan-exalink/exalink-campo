@@ -350,3 +350,29 @@ export interface LoraDevice {
   total_packets: number | null
   online: number
 }
+
+export interface WaterPoint {
+  id: string
+  name: string
+  type: 'water' | 'trough'
+  lat: number
+  lon: number
+  radius_m: number
+  capacity_l: number | null
+  notes: string | null
+  is_active: boolean
+  establishment_id: string
+}
+
+export interface ZoneVisit {
+  id: string
+  water_point_id: string | null
+  water_point_name: string | null
+  paddock_id: string | null
+  paddock_name: string | null
+  event_type: 'paddock_enter' | 'paddock_exit' | 'water_visit'
+  dev_addr: string
+  duration_s: number | null
+  entered_at: string
+  exited_at: string | null
+}
