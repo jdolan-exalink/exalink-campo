@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+import os
 import sqlite3
 import time
 from sqlalchemy import select, text as sql_text
@@ -119,6 +120,59 @@ def _get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(settings.LORA_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _ensure_lora_schema() -> None:
+    """Asegura que el SQLite local tenga todas las columnas usadas por los endpoints.
+
+    Como este servicio comparte DB con el Flask listener en producción pero
+    ambos pueden inicializar la DB, mantenemos un ALTER TABLE defensivo.
+    """
+    try:
+        os.makedirs(os.path.dirname(settings.LORA_DB_PATH), exist_ok=True)
+    except Exception:
+        pass
+    conn = _get_db()
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS gateways (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                gateway_id  TEXT NOT NULL UNIQUE,
+                name        TEXT,
+                lat         REAL,
+                lon         REAL,
+                wifi_ssid   TEXT,
+                wifi_rssi   INTEGER,
+                battery_pct REAL,
+                uptime_s    INTEGER,
+                pkts_total  INTEGER,
+                location    TEXT,
+                last_seen   TIMESTAMP,
+                updated_at  TIMESTAMP,
+                is_active   INTEGER DEFAULT 1,
+                notes       TEXT,
+                created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+            );
+        """)
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(gateways)").fetchall()}
+        migrations = [
+            ("is_paired",            "INTEGER DEFAULT 0"),
+            ("pairing_code",         "TEXT"),
+            ("pairing_expires_at",   "TIMESTAMP"),
+            ("wifi_ip",              "TEXT"),
+        ]
+        for col, decl in migrations:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE gateways ADD COLUMN {col} {decl}")
+                print(f"[LoraDB] Columna agregada: gateways.{col}")
+        conn.commit()
+    except Exception as e:
+        print(f"[LoraDB] WARNING: no se pudo asegurar schema: {e}")
+    finally:
+        conn.close()
+
+
+_ensure_lora_schema()
 
 
 # ── Packets ────────────────────────────────────────────────────────
