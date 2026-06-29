@@ -297,6 +297,7 @@ export interface LoraGateway {
   wifi_rssi: number | null
   wifi_ip: string | null
   battery_pct: number | null
+  charging: number | null
   uptime_s: number | null
   pkts_total: number | null
   location: string | null
