@@ -176,7 +176,7 @@ async def get_stats():
         gateways = conn.execute("SELECT COUNT(DISTINCT gateway_id) FROM packets").fetchone()[0]
         devices = conn.execute("SELECT COUNT(DISTINCT dev_addr) FROM packets WHERE dev_addr IS NOT NULL").fetchone()[0]
         last = conn.execute("SELECT * FROM packets ORDER BY id DESC LIMIT 1").fetchone()
-        gw_registered = conn.execute("SELECT COUNT(*) FROM gateways").fetchone()[0]
+        gw_registered = conn.execute("SELECT COUNT(*) FROM gateways WHERE COALESCE(is_paired, 0) = 1").fetchone()[0]
         dev_registered = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
         conn.close()
         return {
@@ -195,10 +195,13 @@ async def get_stats():
 # ── Gateways ───────────────────────────────────────────────────────
 
 @router.get("/gateways")
-async def get_gateways():
+async def get_gateways(include_pending: bool = Query(False)):
     try:
         conn = _get_db()
-        rows = conn.execute("""
+        where = ""
+        if not include_pending:
+            where = "WHERE g.is_paired = 1"
+        rows = conn.execute(f"""
             SELECT g.*, p.total_packets, COALESCE(dc.device_count, 0) AS device_count,
                    CASE WHEN g.last_seen IS NOT NULL AND g.last_seen > datetime('now', 'localtime', '-1 hours') THEN 1 ELSE 0 END AS online
             FROM gateways g
@@ -208,12 +211,87 @@ async def get_gateways():
             LEFT JOIN (
                 SELECT gateway_id, COUNT(DISTINCT dev_addr) AS device_count FROM packets WHERE dev_addr IS NOT NULL GROUP BY gateway_id
             ) dc ON g.gateway_id = dc.gateway_id
+            {where}
             ORDER BY g.last_seen DESC NULLS LAST
         """).fetchall()
         conn.close()
         return {"gateways": [dict(r) for r in rows]}
     except Exception:
         return {"gateways": []}
+
+
+@router.get("/gateways/pending")
+async def get_pending_gateways():
+    try:
+        conn = _get_db()
+        rows = conn.execute("""
+            SELECT g.gateway_id, g.pairing_expires_at, g.last_seen, g.updated_at,
+                   g.lat, g.lon, g.wifi_ssid, g.wifi_rssi, g.battery_pct,
+                   g.uptime_s, g.pkts_total, g.is_paired
+            FROM gateways g
+            WHERE COALESCE(g.is_paired, 0) = 0
+              AND g.pairing_code IS NOT NULL
+              AND g.pairing_expires_at IS NOT NULL
+              AND g.pairing_expires_at > datetime('now')
+            ORDER BY g.pairing_expires_at ASC
+        """).fetchall()
+        conn.close()
+        return {"gateways": [dict(r) for r in rows]}
+    except Exception:
+        return {"gateways": []}
+
+
+@router.post("/gateways/pair")
+async def pair_gateway(payload: dict = Body(...)):
+    try:
+        gw_id = payload.get("gateway_id")
+        code  = payload.get("pairing_code")
+        name  = (payload.get("name") or "").strip()
+
+        if not gw_id or not code:
+            return {"ok": False, "msg": "gateway_id y pairing_code requeridos"}
+        if not name:
+            return {"ok": False, "msg": "name requerido"}
+
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT pairing_code, pairing_expires_at, is_paired, name FROM gateways WHERE gateway_id = ?",
+            (gw_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "msg": "Gateway desconocido. Esperando primer sync desde el gateway."}
+
+        if row["is_paired"]:
+            conn.close()
+            return {"ok": False, "msg": "El gateway ya esta registrado."}
+
+        if (row["pairing_code"] or "") != code:
+            conn.close()
+            return {"ok": False, "msg": "Codigo de pairing invalido."}
+
+        if not row["pairing_expires_at"]:
+            conn.close()
+            return {"ok": False, "msg": "Codigo expirado."}
+
+        conn.execute(
+            """
+            UPDATE gateways
+               SET is_paired = 1,
+                   name = ?,
+                   pairing_code = NULL,
+                   pairing_expires_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP,
+                   last_seen = CURRENT_TIMESTAMP
+             WHERE gateway_id = ?
+            """,
+            (name, gw_id),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "gateway_id": gw_id, "name": name}
+    except Exception as e:
+        return {"ok": False, "msg": f"Error al emparejar: {e}"}
 
 
 @router.post("/gateways")
@@ -285,17 +363,32 @@ async def sync_gateway(payload: dict = Body(...)):
             "wifi_ssid": "wifi_ssid", "wifi_rssi": "wifi_rssi",
             "battery_pct": "battery_pct", "uptime_s": "uptime_s",
             "pkts_total": "pkts_total",
+            "is_paired": "is_paired",
         }
         for json_key, col in field_map.items():
             if json_key in payload and payload[json_key] is not None:
                 updates.append(f"{col} = ?")
                 params.append(payload[json_key])
 
+        # pairing_code y expiry sólo si vienen (y solo si NO está paired)
+        if payload.get("pairing_code") and not payload.get("is_paired"):
+            updates.append("pairing_code = ?")
+            params.append(payload["pairing_code"])
+            if payload.get("pairing_expires_at"):
+                updates.append("pairing_expires_at = datetime(?, 'unixepoch')")
+                params.append(int(payload["pairing_expires_at"]))
+
         conn.execute(f"UPDATE gateways SET {', '.join(updates)} WHERE gateway_id = ?", params + [gw_id])
         conn.commit()
-        row = conn.execute("SELECT name FROM gateways WHERE gateway_id = ?", (gw_id,)).fetchone()
+        row = conn.execute(
+            "SELECT name, is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
+        ).fetchone()
         conn.close()
-        return {"ok": True, "name": row["name"] if row else None}
+        return {
+            "ok": True,
+            "name": row["name"] if row else None,
+            "is_paired": bool(row["is_paired"]) if row else False,
+        }
     except Exception:
         return {"ok": False, "msg": "Error al sincronizar gateway"}
 
@@ -529,7 +622,7 @@ async def update_equipment(dev_addr: str, payload: dict = Body(...)):
     try:
         conn = _get_db()
         updates, params = ["updated_at = CURRENT_TIMESTAMP", "last_seen = CURRENT_TIMESTAMP"], []
-        for k in ["name", "lat", "lon", "wifi_ssid", "wifi_rssi", "battery_pct", "device_type", "refresh_freq_s", "hw_version"]:
+        for k in ["name", "lat", "lon", "wifi_ssid", "wifi_rssi", "battery_pct", "temperature", "humidity", "device_type", "refresh_freq_s", "hw_version"]:
             if k in payload and payload[k] is not None:
                 updates.append(f"{k} = ?")
                 params.append(payload[k])

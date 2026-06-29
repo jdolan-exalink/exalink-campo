@@ -11,6 +11,9 @@ struct GatewayStatus {
     uint32_t uptimeSec;
     uint32_t pktsTotal;
     String   name;         // nombre actual del gateway
+    bool     isPaired;          // true si ya fue registrado en la app
+    String   pairingCode;       // código temporal (vacío si no está en pairing)
+    uint32_t pairingExpiresAt;  // epoch seconds, 0 si no aplica
 };
 
 // Sincroniza con el servidor. Si el servidor tiene un nombre asignado

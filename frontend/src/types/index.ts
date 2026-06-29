@@ -256,6 +256,9 @@ export interface LoraPacket {
   payload_hex: string | null
   dev_addr: string | null
   device_name: string | null
+  temperature: number | null
+  humidity: number | null
+  battery: number | null
   mtype_str: string | null
   fcnt: number | null
   created_at: string
@@ -299,10 +302,28 @@ export interface LoraGateway {
   last_seen: string | null
   updated_at: string | null
   is_active: number
+  is_paired: number
+  pairing_code: string | null
+  pairing_expires_at: string | null
   notes: string | null
   total_packets: number | null
   online: number
   device_count: number
+}
+
+export interface LoraPendingGateway {
+  gateway_id: string
+  pairing_expires_at: string | null
+  last_seen: string | null
+  updated_at: string | null
+  lat: number | null
+  lon: number | null
+  wifi_ssid: string | null
+  wifi_rssi: number | null
+  battery_pct: number | null
+  uptime_s: number | null
+  pkts_total: number | null
+  is_paired: number
 }
 
 export interface LoraDevice {
@@ -320,6 +341,7 @@ export interface LoraDevice {
   wifi_rssi: number | null
   battery_pct: number | null
   temperature: number | null
+  humidity: number | null
   gps_fresh: number | null
   last_seen: string | null
   updated_at: string | null

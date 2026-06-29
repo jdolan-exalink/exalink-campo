@@ -74,6 +74,9 @@ static void doGatewaySync() {
     st.batteryPct  = readBatteryPct();
     st.uptimeSec   = millis() / 1000;
     st.pktsTotal   = loraMgr.getPacketCount();
+    st.isPaired        = gwCfg.isPaired;
+    st.pairingCode     = gwCfg.pairingCode;
+    st.pairingExpiresAt = gwCfg.pairingExpiresAt;
 
     String newName;
     uint32_t t0 = millis();
@@ -113,14 +116,22 @@ void setup() {
     display.showTitle();
     delay(1200);
 
+    // 1b ── Botón y LED ───────────────────────────────────────
+    pinMode(BTN_PIN, INPUT_PULLUP);   // botón PRG (activo bajo)
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+
     // 2 ── Configuración NVS ───────────────────────────────────
     cfgMgr.begin();
     cfgMgr.load(gwCfg);
+    if (gwCfg.adminUser.isEmpty()) gwCfg.adminUser = ADMIN_DEFAULT_USER;
+    if (gwCfg.adminPass.isEmpty()) gwCfg.adminPass = ADMIN_DEFAULT_PASS;
     Serial.printf("[Config] GW ID    : %s\n", gwCfg.gatewayId.c_str());
     Serial.printf("[Config] WiFi SSID: %s\n", gwCfg.wifiSsid.c_str());
     Serial.printf("[Config] Servidor : %s\n", gwCfg.serverUrl.c_str());
     Serial.printf("[Config] LoRa     : %.1f MHz\n", gwCfg.loraFreq);
     Serial.printf("[Config] Listen   : puerto %d\n", gwCfg.listenPort);
+    Serial.printf("[Config] Admin    : %s / %s\n", gwCfg.adminUser.c_str(), gwCfg.adminPass.c_str());
 
     // 3 ── GPS ────────────────────────────────────────────────
     gpsMgr.begin();
@@ -202,7 +213,16 @@ void setup() {
         Serial.println("[Main] ERROR: No se pudo iniciar el servidor HTTPS LoRaWAN.");
     }
 
-    // 7 ── Estado final ────────────────────────────────────────
+    // 7 ── Pairing: si el GW nunca fue registrado en la app, activar pairing ────
+    if (!gwCfg.isPaired &&
+        (gwCfg.pairingCode.isEmpty() || !cfgMgr.isPairingCodeValid(gwCfg))) {
+        cfgMgr.startPairing(gwCfg);
+        Serial.printf("[Pairing] Codigo generado automaticamente: %s (expira %lu)\n",
+                      gwCfg.pairingCode.c_str(),
+                      (unsigned long)gwCfg.pairingExpiresAt);
+    }
+
+    // 8 ── Estado final ────────────────────────────────────────
     {
         String l1   = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
                       + "  " + wifiMgr.getLocalIP();
@@ -222,8 +242,37 @@ void setup() {
 // loop()
 // ─────────────────────────────────────────────────────────────
 static uint32_t _lastDispRefresh = 0;
+static uint32_t _btnPressStart   = 0;
+static bool     _btnWasPressed   = false;
+static bool     _btnLongReset    = false;   // true = ya se disparó el reset largo
 
 void loop() {
+    // ── Botón físico: mantener 10s → factory reset ───────────
+    if (!_btnLongReset) {
+        bool pressed = (digitalRead(BTN_PIN) == LOW);
+        if (pressed && !_btnWasPressed) {
+            _btnPressStart = millis();
+        } else if (pressed && _btnWasPressed) {
+            uint32_t held = millis() - _btnPressStart;
+            if (held >= 10000) {
+                _btnLongReset = true;
+                _btnPressStart = 0;
+                Serial.println("[BTN] 10s detectado — factory reset.");
+                cfgMgr.reset();
+                display.showStatus("FACTORY RESET", "Reiniciando...");
+                delay(1000);
+                ESP.restart();
+            }
+            // Feedback visual: parpadear LED cada 1s
+            if (held % 1000 < 50) {
+                digitalWrite(LED_PIN, (held / 1000) % 2 ? HIGH : LOW);
+            }
+        } else if (!pressed && _btnWasPressed) {
+            digitalWrite(LED_PIN, LOW);
+        }
+        _btnWasPressed = pressed;
+    }
+
     // ── GPS (leer UART frecuentemente) ────────────────────────
     gpsMgr.update();
 
@@ -260,16 +309,25 @@ void loop() {
     // ── Refresco periódico pantalla cada 5 s ──────────────────
     if (millis() - _lastDispRefresh >= 5000) {
         _lastDispRefresh = millis();
-        String l1 = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
-                    + "  " + wifiMgr.getLocalIP();
-        String l2 = gwCfg.gatewayId;
-        String l4 = buildSrvLine();
-        if (loraOK) {
-            String l3 = String(gwCfg.loraFreq, 1) + " MHz  #" +
-                        String(loraMgr.getPacketCount());
-            display.showStatus(l1, l2, l3, l4);
+
+        // Si aún no fue registrado, dar prioridad a mostrar el código de pairing.
+        if (!gwCfg.isPaired &&
+            gwCfg.pairingCode.length() > 0 &&
+            cfgMgr.isPairingCodeValid(gwCfg)) {
+            display.showPairing(gwCfg.gatewayId, gwCfg.pairingCode,
+                                gwCfg.pairingExpiresAt);
         } else {
-            display.showStatus("LoRa: ERROR", l2, "Revisar hardware", l4);
+            String l1 = (gwCfg.gatewayName.length() > 0 ? gwCfg.gatewayName : "GW-EXA")
+                        + "  " + wifiMgr.getLocalIP();
+            String l2 = gwCfg.gatewayId;
+            String l4 = buildSrvLine();
+            if (loraOK) {
+                String l3 = String(gwCfg.loraFreq, 1) + " MHz  #" +
+                            String(loraMgr.getPacketCount());
+                display.showStatus(l1, l2, l3, l4);
+            } else {
+                display.showStatus("LoRa: ERROR", l2, "Revisar hardware", l4);
+            }
         }
     }
 
