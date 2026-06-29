@@ -14,6 +14,9 @@ public:
                     const String& line4 = "");
     void showLoRaPacket(int rssi, float snr, uint32_t count,
                         const String& preview = "");
+    void showPairing(const String& gwId, const String& code,
+                     uint32_t expiresEpoch);
+    void showPaired(const String& gwId, const String& name);
 
 private:
     TFT_eSPI _tft;

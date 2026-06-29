@@ -40,6 +40,7 @@ def _init_db():
             payload_hex TEXT,
             dev_addr    TEXT,
             temperature REAL,
+            humidity    REAL,
             mtype_str   TEXT,
             fcnt        INTEGER,
             created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
@@ -76,6 +77,7 @@ def _init_db():
             wifi_ssid      TEXT,
             wifi_rssi      INTEGER,
             battery_pct    REAL,
+            humidity       REAL,
             last_seen      TIMESTAMP,
             updated_at     TIMESTAMP,
             is_active      INTEGER DEFAULT 1,
@@ -93,6 +95,8 @@ def _init_db():
     existing_packet_columns = {row["name"] for row in conn.execute("PRAGMA table_info(packets)").fetchall()}
     if "temperature" not in existing_packet_columns:
         conn.execute("ALTER TABLE packets ADD COLUMN temperature REAL")
+    if "humidity" not in existing_packet_columns:
+        conn.execute("ALTER TABLE packets ADD COLUMN humidity REAL")
     if "battery" not in existing_packet_columns:
         conn.execute("ALTER TABLE packets ADD COLUMN battery REAL")
     if "charging" not in existing_packet_columns:
@@ -104,11 +108,19 @@ def _init_db():
     existing_device_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "temperature" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN temperature REAL")
+    if "humidity" not in existing_device_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN humidity REAL")
     if "gps_fresh" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN gps_fresh INTEGER DEFAULT 0")
     existing_gw_columns = {row["name"] for row in conn.execute("PRAGMA table_info(gateways)").fetchall()}
     if "wifi_ip" not in existing_gw_columns:
         conn.execute("ALTER TABLE gateways ADD COLUMN wifi_ip TEXT")
+    if "is_paired" not in existing_gw_columns:
+        conn.execute("ALTER TABLE gateways ADD COLUMN is_paired INTEGER DEFAULT 0")
+    if "pairing_code" not in existing_gw_columns:
+        conn.execute("ALTER TABLE gateways ADD COLUMN pairing_code TEXT")
+    if "pairing_expires_at" not in existing_gw_columns:
+        conn.execute("ALTER TABLE gateways ADD COLUMN pairing_expires_at TIMESTAMP")
     existing_dev2_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "wifi_ip" not in existing_dev2_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN wifi_ip TEXT")
@@ -183,6 +195,11 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
         temp = data.get("temp")
     if temp is None:
         temp = data.get("temperature")
+    humidity = data.get("h")
+    if humidity is None:
+        humidity = data.get("hum")
+    if humidity is None:
+        humidity = data.get("humidity")
     charging = data.get("ch")
     wake_boots = data.get("wb")
     wake_time_ms = data.get("wt")
@@ -208,6 +225,8 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
         updates.append("battery_pct = ?"); params.append(battery)
     if temp is not None:
         updates.append("temperature = ?"); params.append(temp)
+    if humidity is not None:
+        updates.append("humidity = ?"); params.append(humidity)
     if data.get("hv") is not None:
         updates.append("hw_version = ?"); params.append(data["hv"])
     if data.get("tp") is not None:
@@ -224,10 +243,11 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
     )
 
     print(f"[JSON] Dev={dev_addr} lat={data.get('lt')} lon={data.get('ln')} "
-          f"bat={battery}% temp={temp} ch={charging} wb={wake_boots} wt={wake_time_ms} hw={data.get('hv')} type={data.get('tp')}")
+          f"bat={battery}% temp={temp} hum={humidity} ch={charging} wb={wake_boots} wt={wake_time_ms} hw={data.get('hv')} type={data.get('tp')}")
     return {
         "dev_addr": dev_addr,
         "temperature": temp,
+        "humidity": humidity,
         "battery": battery,
         "charging": charging,
         "wake_boots": wake_boots,
@@ -304,6 +324,7 @@ def ingest():
         dev_addr = "raw-" + data["payload_hex"][:8]
 
     temperature = decoded.get("temperature") if decoded else None
+    humidity = decoded.get("humidity") if decoded else None
     battery = decoded.get("battery") if decoded else None
     charging = decoded.get("charging") if decoded else None
     wake_boots = decoded.get("wake_boots") if decoded else None
@@ -311,8 +332,8 @@ def ingest():
     conn.execute("""
         INSERT INTO packets
           (gateway_id, received_at, rssi, snr, freq_mhz, sf,
-           payload_hex, dev_addr, temperature, battery, charging, wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+           payload_hex, dev_addr, temperature, humidity, battery, charging, wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     """, (
         pkt["gateway_id"],
         pkt["received_at"],
@@ -323,6 +344,7 @@ def ingest():
         pkt["payload_hex"],
         dev_addr,
         temperature,
+        humidity,
         battery,
         charging,
         wake_boots,
@@ -501,7 +523,11 @@ def gateway_sync():
         "uptime_s":    "uptime_s",
         "pkts_total":  "pkts_total",
         "wifi_ip":     "wifi_ip",
+        "is_paired":   "is_paired",
     }
+    if "pairing_code" in data and data["pairing_code"]:
+        field_map["pairing_code"]       = "pairing_code"
+        field_map["pairing_expires_at"] = "pairing_expires_at"
     for json_key, col in field_map.items():
         if json_key in data and data[json_key] is not None:
             updates.append(f"{col} = ?")
@@ -514,11 +540,12 @@ def gateway_sync():
     conn.commit()
 
     row = conn.execute(
-        "SELECT name FROM gateways WHERE gateway_id = ?", (gw_id,)
+        "SELECT name, is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
     ).fetchone()
     conn.close()
 
     assigned_name = row["name"] if row else None
+    is_paired = bool(row["is_paired"]) if row else False
 
     print(f"[SYNC] GW={gw_id}  name={data.get('name', '-')}  "
           f"uptime={data.get('uptime_s')}s  pkts={data.get('pkts_total')}  "
@@ -527,7 +554,68 @@ def gateway_sync():
           f"gps={data.get('lat')},{data.get('lon')}  "
           f"assigned_name={assigned_name or '-'}")
 
-    return jsonify({"ok": True, "name": assigned_name}), 200
+    return jsonify({
+        "ok":        True,
+        "name":      assigned_name,
+        "is_paired": is_paired,
+    }), 200
+
+
+@app.route("/api/lora/gateway/pair", methods=["POST"])
+def gateway_pair():
+    if not _check_auth():
+        return jsonify({"ok": False, "msg": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    gw_id = data.get("gateway_id")
+    code  = data.get("pairing_code")
+    name  = (data.get("name") or "").strip()
+
+    if not gw_id or not code:
+        return jsonify({"ok": False, "msg": "gateway_id y pairing_code requeridos"}), 400
+    if not name:
+        return jsonify({"ok": False, "msg": "name requerido"}), 400
+
+    conn = _get_db()
+    row = conn.execute(
+        "SELECT pairing_code, pairing_expires_at, is_paired, name FROM gateways WHERE gateway_id = ?",
+        (gw_id,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "msg": "Gateway desconocido. Esperando primer sync desde el gateway."}), 404
+
+    if row["is_paired"]:
+        conn.close()
+        return jsonify({"ok": False, "msg": "El gateway ya esta registrado."}), 409
+
+    if not row["pairing_code"] or (row["pairing_code"] or "") != code:
+        conn.close()
+        return jsonify({"ok": False, "msg": "Codigo de pairing invalido."}), 403
+
+    if not row["pairing_expires_at"]:
+        conn.close()
+        return jsonify({"ok": False, "msg": "Codigo expirado."}), 403
+
+    conn.execute(
+        """
+        UPDATE gateways
+           SET is_paired = 1,
+               name = ?,
+               pairing_code = NULL,
+               pairing_expires_at = NULL,
+               updated_at = datetime('now', 'localtime'),
+               last_seen = datetime('now', 'localtime')
+         WHERE gateway_id = ?
+        """,
+        (name, gw_id),
+    )
+    conn.commit()
+    conn.close()
+
+    print(f"[PAIR] GW={gw_id} registrado como '{name}'")
+    return jsonify({"ok": True, "gateway_id": gw_id, "name": name}), 200
 
 
 # ── Equipment (devices) ────────────────────────────────────────────
@@ -555,6 +643,7 @@ def equipment():
         "wifi_rssi":      "wifi_rssi",
         "battery_pct":    "battery_pct",
         "temperature":    "temperature",
+        "humidity":       "humidity",
         "device_type":    "device_type",
         "refresh_freq_s": "refresh_freq_s",
         "hw_version":     "hw_version",

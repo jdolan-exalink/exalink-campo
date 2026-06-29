@@ -4,11 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   RadioTower, Activity, Satellite, Database, Clock, Settings, Table, Save,
   Wifi, X, Plus, Trash2, ScrollText, Antenna, Router, Waves, Pencil, Check,
-  Battery, BatteryLow, BatteryFull, MapPin, Navigation
+  Battery, BatteryLow, BatteryFull, MapPin, Navigation, KeyRound, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { LoraPacketResponse, LoraStats, LoraConfig, LoraPacket, LoraGateway, LoraDevice } from '@/types'
+import type { LoraPacketResponse, LoraStats, LoraConfig, LoraPacket, LoraGateway, LoraDevice, LoraPendingGateway } from '@/types'
 import { formatDateTime, cn } from '@/lib/utils'
 import Header from '@/components/layout/Header'
 
@@ -41,6 +41,13 @@ export default function Lora() {
     queryKey: ['lora-gateways'],
     queryFn: () => api.get('/lora/gateways').then(r => r.data),
     enabled: tab === 'gateways',
+  })
+
+  const { data: pending, isLoading: pendingLoading } = useQuery<{ gateways: LoraPendingGateway[] }>({
+    queryKey: ['lora-gateways-pending'],
+    queryFn: () => api.get('/lora/gateways/pending').then(r => r.data),
+    enabled: tab === 'gateways',
+    refetchInterval: 15_000,
   })
 
   const { data: devicesData, isLoading: devLoading } = useQuery<{ devices: LoraDevice[] }>({
@@ -76,6 +83,7 @@ export default function Lora() {
           queryClient.invalidateQueries({ queryKey: ['lora-stats'] })
           queryClient.invalidateQueries({ queryKey: ['lora-packets'] })
           queryClient.invalidateQueries({ queryKey: ['lora-gateways'] })
+          queryClient.invalidateQueries({ queryKey: ['lora-gateways-pending'] })
           queryClient.invalidateQueries({ queryKey: ['lora-devices'] })
         }
       } catch { /* ignore */ }
@@ -115,6 +123,23 @@ export default function Lora() {
     mutationFn: (payload: Partial<LoraGateway>) => api.post('/lora/gateways', payload),
     onSuccess: () => { toast.success('Gateway registrado'); queryClient.invalidateQueries({ queryKey: ['lora-gateways'] }) },
     onError: () => toast.error('Error al registrar gateway'),
+  })
+
+  const pairGatewayMutation = useMutation({
+    mutationFn: (payload: { gateway_id: string; pairing_code: string; name: string }) =>
+      api.post('/lora/gateways/pair', payload),
+    onSuccess: (res) => {
+      const data = res?.data
+      if (data?.ok) {
+        toast.success(`Gateway "${data.name}" registrado`)
+      } else {
+        toast.error(data?.msg || 'Error al registrar gateway')
+      }
+      queryClient.invalidateQueries({ queryKey: ['lora-gateways'] })
+      queryClient.invalidateQueries({ queryKey: ['lora-gateways-pending'] })
+      queryClient.invalidateQueries({ queryKey: ['lora-stats'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.msg || 'Error al registrar gateway'),
   })
 
   const deleteGatewayMutation = useMutation({
@@ -234,11 +259,15 @@ export default function Lora() {
         {tab === 'gateways' && (
           <GatewaysTab
             gateways={gateways?.gateways ?? []}
+            pending={pending?.gateways ?? []}
             loading={gwLoading}
+            pendingLoading={pendingLoading}
             onCreate={(d) => createGatewayMutation.mutate(d)}
+            onPair={(d) => pairGatewayMutation.mutate(d)}
             onDelete={(id, name) => setConfirmAction({ title: 'Eliminar gateway', msg: `Eliminar "${name || id}"? Se perdera su registro y nombre asignado.`, onOk: () => deleteGatewayMutation.mutate(id) })}
             onUpdate={(gw) => updateGatewayMutation.mutate(gw)}
             creating={createGatewayMutation.isPending}
+            pairing={pairGatewayMutation.isPending}
           />
         )}
 
@@ -360,15 +389,18 @@ function ReaderTab({ packets, total, loading, limit, setLimit }: {
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">SNR</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Freq</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">SF</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Temp</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Hum</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Bat</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Type</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">FCnt</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Payload</th>
             </tr></thead>
             <tbody>
               {loading ? Array.from({ length: 10 }).map((_, i) => (
-                <tr key={i} className="border-b border-surface-700">{Array.from({ length: 10 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>
+                <tr key={i} className="border-b border-surface-700">{Array.from({ length: 13 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>
               )) : packets.length === 0 ? (
-                <tr><td colSpan={10} className="px-3 py-12 text-center text-slate-500"><Wifi size={24} className="mx-auto mb-2 opacity-50" />No hay paquetes registrados</td></tr>
+                <tr><td colSpan={13} className="px-3 py-12 text-center text-slate-500"><Wifi size={24} className="mx-auto mb-2 opacity-50" />No hay paquetes registrados</td></tr>
               ) : packets.map(pkt => (
                 <tr key={pkt.id} className="table-row">
                   <td className="px-2 py-2 text-slate-400 text-xs whitespace-nowrap">{formatDateTime(pkt.created_at)}</td>
@@ -384,6 +416,9 @@ function ReaderTab({ packets, total, loading, limit, setLimit }: {
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{pkt.snr != null ? `${pkt.snr.toFixed(1)} dB` : '—'}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums font-mono">{pkt.freq_mhz != null ? `${pkt.freq_mhz.toFixed(1)} MHz` : '—'}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums font-mono">{pkt.sf != null ? `SF${pkt.sf}` : '—'}</td>
+                  <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{pkt.temperature != null ? `${pkt.temperature.toFixed(1)}°C` : '—'}</td>
+                  <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{pkt.humidity != null ? `${pkt.humidity.toFixed(0)}%` : '—'}</td>
+                  <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{pkt.battery != null ? `${pkt.battery.toFixed(0)}%` : '—'}</td>
                   <td className="px-2 py-2">{pkt.mtype_str ? <span className="text-xs px-1.5 py-0.5 rounded bg-brand-600/20 text-brand-400 font-mono">{pkt.mtype_str}</span> : <span className="text-slate-500 text-xs">—</span>}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums font-mono">{pkt.fcnt != null ? pkt.fcnt : '—'}</td>
                   <td className="px-2 py-2 text-slate-500 text-xs font-mono max-w-[100px] truncate">{pkt.payload_hex ?? '—'}</td>
@@ -399,16 +434,23 @@ function ReaderTab({ packets, total, loading, limit, setLimit }: {
 
 // ── Gateways Tab ──────────────────────────────────────────────────
 
-function GatewaysTab({ gateways, loading, onCreate, onDelete, onUpdate, creating }: {
-  gateways: LoraGateway[]; loading: boolean; onCreate: (d: Partial<LoraGateway>) => void;
+function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onPair, onDelete, onUpdate, creating, pairing }: {
+  gateways: LoraGateway[]; pending: LoraPendingGateway[]; loading: boolean; pendingLoading: boolean;
+  onCreate: (d: Partial<LoraGateway>) => void;
+  onPair: (d: { gateway_id: string; pairing_code: string; name: string }) => void;
   onDelete: (id: string, name?: string | null) => void; onUpdate: (d: { gateway_id: string; name?: string; location?: string; notes?: string }) => void;
-  creating: boolean
+  creating: boolean; pairing: boolean
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editLoc, setEditLoc] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [pairOpen, setPairOpen] = useState(false)
+  const [pairGwId, setPairGwId] = useState('')
+  const [pairName, setPairName] = useState('')
+  const [pairCode, setPairCode] = useState('')
   const formRef = useRef<HTMLFormElement>(null)
+  const pairFormRef = useRef<HTMLFormElement>(null)
 
   const startEdit = (gw: LoraGateway) => {
     setEditingId(gw.gateway_id)
@@ -422,8 +464,76 @@ function GatewaysTab({ gateways, loading, onCreate, onDelete, onUpdate, creating
     setEditingId(null)
   }
 
+  const openPairFor = (gw: LoraPendingGateway) => {
+    setPairGwId(gw.gateway_id)
+    setPairName('')
+    setPairCode('')
+    setPairOpen(true)
+  }
+
+  const openPairManual = () => {
+    setPairGwId('')
+    setPairName('')
+    setPairCode('')
+    setPairOpen(true)
+  }
+
+  const submitPair = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!pairGwId.trim() || !pairCode.trim() || !pairName.trim()) return
+    onPair({ gateway_id: pairGwId.trim(), pairing_code: pairCode.trim(), name: pairName.trim() })
+    setPairOpen(false)
+  }
+
   return (
     <div className="space-y-4">
+      {/* Banner: gateways pendientes de pairing */}
+      {pending && pending.length > 0 && (
+        <div className="card p-4 border border-warning/40 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-warning/20 flex items-center justify-center shrink-0">
+              <KeyRound size={16} className="text-warning" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div>
+                  <p className="text-sm font-semibold text-white">Gateways pendientes de registro</p>
+                  <p className="text-xs text-slate-400">
+                    {pending.length} gateway{pending.length !== 1 ? 's' : ''} con codigo de pairing activo.
+                    Ingresa el codigo que muestra el dispositivo fisico para registrarlo.
+                  </p>
+                </div>
+                <button onClick={openPairManual} className="btn-primary text-xs flex items-center gap-1.5 shrink-0">
+                  <Plus size={13} />Registrar manualmente
+                </button>
+              </div>
+              <div className="space-y-2">
+                {pendingLoading ? (
+                  <div className="h-10 bg-surface-800 rounded animate-pulse" />
+                ) : pending.map(p => (
+                  <div key={p.gateway_id} className="flex items-center gap-3 bg-surface-900/60 rounded-lg p-2.5 border border-surface-700">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-xs text-white truncate">{p.gateway_id}</p>
+                      <p className="text-[10px] text-slate-500 flex items-center gap-2">
+                        {p.wifi_ssid && <span><Navigation size={9} className="inline mr-0.5" />{p.wifi_ssid}</span>}
+                        {p.last_seen && <span>visto {formatDateTime(p.last_seen)}</span>}
+                        {p.pairing_expires_at && (
+                          <span className="text-warning">expira {formatDateTime(p.pairing_expires_at)}</span>
+                        )}
+                      </p>
+                    </div>
+                    <button onClick={() => openPairFor(p)} className="btn-primary text-xs flex items-center gap-1.5 shrink-0">
+                      <KeyRound size={12} />Emparejar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Form de alta manual (solo nombre para gateways ya registrados manualmente sin pairing) */}
       <form ref={formRef} onSubmit={e => { e.preventDefault(); const f = e.currentTarget; onCreate({ gateway_id: (f.elements.namedItem('gw_id') as HTMLInputElement).value, name: (f.elements.namedItem('gw_name') as HTMLInputElement).value, location: (f.elements.namedItem('gw_loc') as HTMLInputElement).value, notes: (f.elements.namedItem('gw_notes') as HTMLInputElement).value }); f.reset() }}
         className="card p-4 flex flex-wrap items-end gap-3">
         <div className="flex-1 min-w-[160px]"><label className="block text-xs text-slate-400 mb-1">Gateway ID *</label><input name="gw_id" required placeholder="GW-001" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" /></div>
@@ -432,6 +542,7 @@ function GatewaysTab({ gateways, loading, onCreate, onDelete, onUpdate, creating
         <div className="flex-1 min-w-[160px]"><label className="block text-xs text-slate-400 mb-1">Notas</label><input name="gw_notes" placeholder="" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
         <button type="submit" disabled={creating} className="btn-primary flex items-center gap-1.5 text-sm h-10"><Plus size={14} />{creating ? 'Registrando...' : 'Registrar'}</button>
       </form>
+
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -448,9 +559,12 @@ function GatewaysTab({ gateways, loading, onCreate, onDelete, onUpdate, creating
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase w-24"></th>
             </tr></thead>
             <tbody>
-              {loading ? Array.from({ length: 3 }).map((_, i) => (<tr key={i} className="border-b border-surface-700">{Array.from({ length: 10 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>))
+              {loading ? Array.from({ length: 3 }).map((_, i) => (<tr key={i} className="border-b border-surface-700">{Array.from({ length: 9 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>))
               : gateways.length === 0 ? (
-                <tr><td colSpan={10} className="px-3 py-12 text-center text-slate-500">No hay gateways registrados</td></tr>
+                <tr><td colSpan={9} className="px-3 py-12 text-center text-slate-500">
+                  <KeyRound size={24} className="mx-auto mb-2 opacity-50" />
+                  No hay gateways registrados. Esperando que algun gateway se empareje...
+                </td></tr>
               ) : gateways.map(gw => {
                 const isEditing = editingId === gw.gateway_id
                 const online = !!gw.online
@@ -523,6 +637,49 @@ function GatewaysTab({ gateways, loading, onCreate, onDelete, onUpdate, creating
           </table>
         </div>
       </div>
+
+      {/* Modal de emparejamiento */}
+      {pairOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setPairOpen(false)}>
+          <form ref={pairFormRef} onSubmit={submitPair} className="card p-6 max-w-md w-full mx-4 shadow-2xl border border-surface-600" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-9 h-9 rounded-lg bg-brand-600/20 flex items-center justify-center shrink-0">
+                <KeyRound size={16} className="text-brand-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-white">Registrar Gateway (Pairing)</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Ingresa el codigo que muestra el gateway fisico en su pantalla o portal web.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Gateway ID</label>
+                <input value={pairGwId} onChange={e => setPairGwId(e.target.value)} required placeholder="ABCDEF1234567890"
+                  className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Codigo de Pairing (6 digitos)</label>
+                <input value={pairCode} onChange={e => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required placeholder="123456" maxLength={6}
+                  className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-lg text-white font-mono tracking-widest text-center focus:outline-none focus:border-brand-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Nombre para identificar *</label>
+                <input value={pairName} onChange={e => setPairName(e.target.value)} required placeholder="Gateway Norte"
+                  className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button" onClick={() => setPairOpen(false)} className="btn-secondary text-xs">Cancelar</button>
+              <button type="submit" disabled={pairing || !pairGwId.trim() || !pairCode.trim() || !pairName.trim()}
+                className="btn-primary text-xs flex items-center gap-1.5">
+                {pairing ? <><RefreshCw size={12} className="animate-spin" />Emparejando...</> : <><KeyRound size={12} />Emparejar</>}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
@@ -577,15 +734,16 @@ function DevicesTab({ devices, loading, onCreate, onDelete, onUpdate, creating }
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">GPS</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">WiFi</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Temp</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Hum</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Bateria</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Paq.</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Ultima</th>
               <th className="px-2 py-2 uppercase w-20"></th>
             </tr></thead>
             <tbody>
-              {loading ? Array.from({ length: 3 }).map((_, i) => (<tr key={i} className="border-b border-surface-700">{Array.from({ length: 13 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>))
+              {loading ? Array.from({ length: 3 }).map((_, i) => (<tr key={i} className="border-b border-surface-700">{Array.from({ length: 14 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>))
               : devices.length === 0 ? (
-                <tr><td colSpan={13} className="px-3 py-12 text-center text-slate-500">No hay dispositivos registrados</td></tr>
+                <tr><td colSpan={14} className="px-3 py-12 text-center text-slate-500">No hay dispositivos registrados</td></tr>
               ) : devices.map(dev => {
                 const isEditing = editingAddr === dev.dev_addr
                 return (
@@ -617,6 +775,7 @@ function DevicesTab({ devices, loading, onCreate, onDelete, onUpdate, creating }
                   </td>
                   <td className="px-2 py-2">{dev.wifi_ssid ? <span className="flex items-center gap-1 text-xs"><Navigation size={11} className={cn(dev.wifi_rssi != null && dev.wifi_rssi > -60 ? 'text-field' : 'text-warning')} /><span className="text-slate-300">{dev.wifi_ssid}</span>{dev.wifi_rssi != null && <span className="text-slate-500 tabular-nums">{dev.wifi_rssi}dBm</span>}</span> : <span className="text-slate-500 text-xs">—</span>}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{dev.temperature != null ? <span className={cn(dev.temperature > 38 ? 'text-danger' : dev.temperature < 5 ? 'text-blue-400' : 'text-slate-300')}>{dev.temperature.toFixed(1)}°C</span> : '—'}</td>
+                  <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{dev.humidity != null ? `${dev.humidity.toFixed(0)}%` : '—'}</td>
                   <td className="px-2 py-2">{dev.battery_pct != null ? <span className={cn('flex items-center gap-1 text-xs tabular-nums', dev.battery_pct <= 20 ? 'text-danger' : dev.battery_pct <= 50 ? 'text-warning' : 'text-field')}>{dev.battery_pct <= 20 ? <BatteryLow size={13} /> : dev.battery_pct >= 80 ? <BatteryFull size={13} /> : <Battery size={13} />}{dev.battery_pct.toFixed(0)}%</span> : <span className="text-slate-500 text-xs">—</span>}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{dev.total_packets ?? 0}</td>
                   <td className="px-2 py-2 text-slate-400 text-xs whitespace-nowrap">{(dev.updated_at || dev.last_seen) ? formatDateTime(dev.updated_at || dev.last_seen) : 'nunca'}</td>

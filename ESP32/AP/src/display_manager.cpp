@@ -83,6 +83,30 @@ void DisplayManager::showLoRaPacket(int rssi, float snr,
     _render();
 }
 
+void DisplayManager::showPairing(const String& gwId, const String& code,
+                                 uint32_t expiresEpoch) {
+    uint32_t now = (uint32_t)time(nullptr);
+    if (now < 60) now = (uint32_t)(millis() / 1000);
+    int32_t minsLeft = (expiresEpoch > now)
+        ? (int32_t)((expiresEpoch - now) / 60)
+        : 0;
+
+    _l1 = "PAIRING MODE";
+    String idLine = "ID:" + gwId.substring(0, 16);
+    _l2 = idLine;
+    _l3 = String("CODE: ") + code;
+    _l4 = String("Expira en ") + minsLeft + " min";
+    _render();
+}
+
+void DisplayManager::showPaired(const String& gwId, const String& name) {
+    _l1 = "REGISTRADO";
+    _l2 = "ID:" + gwId.substring(0, 16);
+    _l3 = name.length() > 0 ? name.substring(0, 20) : "Gateway OK";
+    _l4 = "";
+    _render();
+}
+
 void DisplayManager::_drawHeader() {
     _tft.setTextColor(COL_HDR, COL_BG);
     _tft.setTextSize(1);

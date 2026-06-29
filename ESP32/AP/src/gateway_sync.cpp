@@ -37,6 +37,18 @@ bool syncGateway(const String&        serverUrl,
     if (st.name.length() > 0)
         doc["name"] = st.name;
 
+    // Pairing: solo enviamos el código si existe, es válido y no estamos aún registrados.
+    if (!st.isPaired && st.pairingCode.length() > 0 && st.pairingExpiresAt > 0) {
+        uint32_t now = (uint32_t)time(nullptr);
+        if (now < 60) now = (uint32_t)(millis() / 1000);
+        if (now < st.pairingExpiresAt) {
+            doc["pairing_code"]           = st.pairingCode;
+            doc["pairing_expires_at"]     = st.pairingExpiresAt;
+            doc["pairing_active"]         = true;
+        }
+    }
+    doc["is_paired"] = st.isPaired;
+
     String body;
     serializeJson(doc, body);
 
