@@ -567,36 +567,45 @@ def gateway_pair():
         return jsonify({"ok": False, "msg": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or {}
-    gw_id = data.get("gateway_id")
-    code  = data.get("pairing_code")
-    name  = (data.get("name") or "").strip()
+    code = (data.get("pairing_code") or "").strip()
+    name = (data.get("name") or "").strip()
+    hint_gw_id = (data.get("gateway_id") or "").strip() or None
 
-    if not gw_id or not code:
-        return jsonify({"ok": False, "msg": "gateway_id y pairing_code requeridos"}), 400
-    if not name:
-        return jsonify({"ok": False, "msg": "name requerido"}), 400
+    if not code:
+        return jsonify({"ok": False, "msg": "pairing_code requerido"}), 400
 
     conn = _get_db()
-    row = conn.execute(
-        "SELECT pairing_code, pairing_expires_at, is_paired, name FROM gateways WHERE gateway_id = ?",
-        (gw_id,),
-    ).fetchone()
+    row = None
+    if hint_gw_id:
+        row = conn.execute(
+            "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+            "FROM gateways WHERE gateway_id = ?",
+            (hint_gw_id,),
+        ).fetchone()
+        if row and (row["pairing_code"] or "") != code:
+            conn.close()
+            return jsonify({"ok": False, "msg": "El codigo no corresponde al gateway seleccionado."}), 403
+    if row is None:
+        row = conn.execute(
+            "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+            "FROM gateways "
+            "WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
+            "AND pairing_expires_at IS NOT NULL "
+            "AND datetime(pairing_expires_at) > datetime('now', 'localtime') "
+            "ORDER BY pairing_expires_at DESC LIMIT 1",
+            (code,),
+        ).fetchone()
 
     if not row:
         conn.close()
-        return jsonify({"ok": False, "msg": "Gateway desconocido. Esperando primer sync desde el gateway."}), 404
+        return jsonify({"ok": False, "msg": "Codigo de pairing invalido o expirado."}), 403
 
     if row["is_paired"]:
         conn.close()
         return jsonify({"ok": False, "msg": "El gateway ya esta registrado."}), 409
 
-    if not row["pairing_code"] or (row["pairing_code"] or "") != code:
-        conn.close()
-        return jsonify({"ok": False, "msg": "Codigo de pairing invalido."}), 403
-
-    if not row["pairing_expires_at"]:
-        conn.close()
-        return jsonify({"ok": False, "msg": "Codigo expirado."}), 403
+    gw_id = row["gateway_id"]
+    final_name = name if name else gw_id
 
     conn.execute(
         """
@@ -609,13 +618,13 @@ def gateway_pair():
                last_seen = datetime('now', 'localtime')
          WHERE gateway_id = ?
         """,
-        (name, gw_id),
+        (final_name, gw_id),
     )
     conn.commit()
     conn.close()
 
-    print(f"[PAIR] GW={gw_id} registrado como '{name}'")
-    return jsonify({"ok": True, "gateway_id": gw_id, "name": name}), 200
+    print(f"[PAIR] GW={gw_id} registrado como '{final_name}'")
+    return jsonify({"ok": True, "gateway_id": gw_id, "name": final_name}), 200
 
 
 # ── Equipment (devices) ────────────────────────────────────────────

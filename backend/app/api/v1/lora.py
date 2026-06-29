@@ -244,35 +244,46 @@ async def get_pending_gateways():
 @router.post("/gateways/pair")
 async def pair_gateway(payload: dict = Body(...)):
     try:
-        gw_id = payload.get("gateway_id")
-        code  = payload.get("pairing_code")
-        name  = (payload.get("name") or "").strip()
+        code = (payload.get("pairing_code") or "").strip()
+        name = (payload.get("name") or "").strip()
+        hint_gw_id = (payload.get("gateway_id") or "").strip() or None
 
-        if not gw_id or not code:
-            return {"ok": False, "msg": "gateway_id y pairing_code requeridos"}
-        if not name:
-            return {"ok": False, "msg": "name requerido"}
+        if not code:
+            return {"ok": False, "msg": "pairing_code requerido"}
 
         conn = _get_db()
-        row = conn.execute(
-            "SELECT pairing_code, pairing_expires_at, is_paired, name FROM gateways WHERE gateway_id = ?",
-            (gw_id,),
-        ).fetchone()
+
+        # Si el cliente mandó gateway_id (lo seleccionó del banner de pendientes),
+        # validamos que coincida con el código. Si NO, buscamos el código directamente.
+        row = None
+        if hint_gw_id:
+            row = conn.execute(
+                "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+                "FROM gateways WHERE gateway_id = ?",
+                (hint_gw_id,),
+            ).fetchone()
+            if row and (row["pairing_code"] or "") != code:
+                conn.close()
+                return {"ok": False, "msg": "El codigo no corresponde al gateway seleccionado."}
+        if row is None:
+            row = conn.execute(
+                "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
+                "FROM gateways WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
+                "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now') "
+                "ORDER BY pairing_expires_at DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+
         if not row:
             conn.close()
-            return {"ok": False, "msg": "Gateway desconocido. Esperando primer sync desde el gateway."}
+            return {"ok": False, "msg": "Codigo de pairing invalido o expirado. Verifica que el gateway este conectado y el codigo vigente."}
 
         if row["is_paired"]:
             conn.close()
             return {"ok": False, "msg": "El gateway ya esta registrado."}
 
-        if (row["pairing_code"] or "") != code:
-            conn.close()
-            return {"ok": False, "msg": "Codigo de pairing invalido."}
-
-        if not row["pairing_expires_at"]:
-            conn.close()
-            return {"ok": False, "msg": "Codigo expirado."}
+        gw_id = row["gateway_id"]
+        final_name = name if name else gw_id   # auto-asignar ID si no hay nombre
 
         conn.execute(
             """
@@ -285,11 +296,11 @@ async def pair_gateway(payload: dict = Body(...)):
                    last_seen = CURRENT_TIMESTAMP
              WHERE gateway_id = ?
             """,
-            (name, gw_id),
+            (final_name, gw_id),
         )
         conn.commit()
         conn.close()
-        return {"ok": True, "gateway_id": gw_id, "name": name}
+        return {"ok": True, "gateway_id": gw_id, "name": final_name}
     except Exception as e:
         return {"ok": False, "msg": f"Error al emparejar: {e}"}
 
