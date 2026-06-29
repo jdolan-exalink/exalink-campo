@@ -234,6 +234,7 @@ export interface MapGateway {
   lon: number
   online: number
   battery_pct?: number | null
+  charging?: number | null
   last_seen?: string | null
   device_count?: number
 }

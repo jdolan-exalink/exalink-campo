@@ -34,6 +34,7 @@ private:
 
     void _render();
     void _drawHeader();
+    void _drawBattery();
     void _clearRightEdge();
     void _rawFillWindow(uint16_t xs, uint16_t ys,
                         uint16_t xe, uint16_t ye,

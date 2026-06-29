@@ -7,8 +7,27 @@
 #define COL_TEXT   TFT_WHITE
 #define COL_DIM    0x7BEF   // gris medio
 #define COL_OK     TFT_GREEN
+#define COL_WARN   TFT_YELLOW
+#define COL_CHG    TFT_YELLOW
 #define COL_ERR    TFT_RED
 
+// ── Lightning bolt helpers ──────────────────────────────────
+static void drawBatteryBolt(TFT_eSPI& tft, int16_t x, int16_t y, uint16_t color) {
+    tft.drawLine(x + 16, y + 1, x + 11, y + 5, color);
+    tft.drawLine(x + 11, y + 5, x + 15, y + 5, color);
+    tft.drawLine(x + 15, y + 5, x + 10, y + 10, color);
+    tft.drawLine(x + 17, y + 1, x + 12, y + 5, color);
+    tft.drawLine(x + 12, y + 5, x + 16, y + 5, color);
+    tft.drawLine(x + 16, y + 5, x + 11, y + 10, color);
+}
+
+static void drawSmallBatteryBolt(TFT_eSPI& tft, int16_t x, int16_t y, uint16_t color) {
+    tft.drawLine(x + 6, y + 1, x + 4, y + 3, color);
+    tft.drawLine(x + 4, y + 3, x + 6, y + 3, color);
+    tft.drawLine(x + 6, y + 3, x + 4, y + 5, color);
+}
+
+// ── Constructor ─────────────────────────────────────────────
 DisplayManager::DisplayManager()
     : _tft()
     , _lastUpdate(0)
@@ -16,17 +35,15 @@ DisplayManager::DisplayManager()
     , _batCharging(false)
 {}
 
+// ── Init ────────────────────────────────────────────────────
 void DisplayManager::begin() {
-    // Power: 80 ms antes de tocar SPI (algunos paneles necesitan > 10 ms)
     pinMode(PIN_TFT_PWR, OUTPUT);
     digitalWrite(PIN_TFT_PWR, HIGH);
     delay(80);
 
-    // Backlight OFF durante init para no mostrar basura
     pinMode(PIN_TFT_BL, OUTPUT);
     digitalWrite(PIN_TFT_BL, PIN_TFT_BL_OFF);
 
-    // Variante estable: controlador 128x160 con vidrio visible 160x80 en y=24..103.
     _tft.init(INITR_GREENTAB);
     _tft.setRotation(1);   // _width=160, _height=128
     _tft.startWrite();
@@ -34,7 +51,6 @@ void DisplayManager::begin() {
     _tft.endWrite();
     _tft.setTextWrap(false);
 
-    // Backlight ON
     delay(50);
     digitalWrite(PIN_TFT_BL, PIN_TFT_BL_ON);
 
@@ -42,16 +58,15 @@ void DisplayManager::begin() {
     Serial.println("[Display] init OK (TFT_eSPI ST7735 128x160, visible y=24..103)");
 }
 
+// ── Title screen ────────────────────────────────────────────
 void DisplayManager::showTitle() {
     _tft.fillScreen(COL_BG);
 
-    // Título grande centrado
     _tft.setTextColor(COL_HDR, COL_BG);
     _tft.setTextSize(1);
     _tft.setCursor(VIEW_X + 22, VIEW_Y + 8);
     _tft.print("EXALINK LORA GW");
 
-    // Subtítulo
     _tft.setTextColor(COL_DIM, COL_BG);
     _tft.setTextSize(1);
     _tft.setCursor(VIEW_X + 44, VIEW_Y + 36);
@@ -61,6 +76,7 @@ void DisplayManager::showTitle() {
     _clearRightEdge();
 }
 
+// ── Status (4 lines) ────────────────────────────────────────
 void DisplayManager::showStatus(const String& line1,
                                  const String& line2,
                                  const String& line3,
@@ -75,6 +91,7 @@ void DisplayManager::showStatus(const String& line1,
     _render();
 }
 
+// ── LoRa packet screen ──────────────────────────────────────
 void DisplayManager::showLoRaPacket(int rssi, float snr,
                                      uint32_t count,
                                      const String& preview) {
@@ -85,6 +102,7 @@ void DisplayManager::showLoRaPacket(int rssi, float snr,
     _render();
 }
 
+// ── Pairing screen ──────────────────────────────────────────
 void DisplayManager::showPairing(const String& gwId, const String& code,
                                  uint32_t expiresEpoch) {
     uint32_t now = (uint32_t)time(nullptr);
@@ -93,11 +111,9 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
         ? (int32_t)((expiresEpoch - now) / 60)
         : 0;
 
-    // Render directo al OLED para evitar throttling y mostrar el codigo
-    // de forma destacada (letra grande, fondo).
     _tft.fillScreen(COL_BG);
 
-    // Header amarillo/cyan
+    // Header
     _tft.setTextColor(COL_HDR, COL_BG);
     _tft.setTextSize(1);
     _tft.setCursor(VIEW_X + 20, VIEW_Y + 4);
@@ -115,18 +131,17 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
     _tft.setTextColor(COL_TEXT, COL_BG);
     _tft.print(gwId.substring(0, 16));
 
-    // Label "CODE:"
+    // Label
     _tft.setTextColor(COL_DIM, COL_BG);
     _tft.setCursor(VIEW_X + 2, VIEW_Y + 30);
     _tft.print("CODE:");
 
-    // Codigo en 2 lineas, TAMANO 2 (16px de alto), espacios entre digitos
+    // Code in 2 lines, size 2, spaces between digits
     _tft.setTextColor(TFT_WHITE, COL_BG);
     _tft.setTextSize(2);
     String d = code;
     String p1, p2;
     if (d.length() >= 6) {
-        // "123456" -> "1 2 3" / "4 5 6"
         p1 = String(d[0]) + " " + d[1] + " " + d[2];
         p2 = String(d[3]) + " " + d[4] + " " + d[5];
     } else if (d.length() == 3) {
@@ -141,15 +156,15 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
         _tft.print(p2);
     }
 
-    // Reset estado para no confundir a showStatus
     _l1 = "PAIRING " + String(minsLeft) + "m";
     _l2 = "ID:" + gwId.substring(0, 16);
     _l3 = "CODE: " + p1;
     _l4 = "      " + p2;
-    _lastUpdate = millis();   // evitar que showStatus sobrescriba
+    _lastUpdate = millis();
     _clearRightEdge();
 }
 
+// ── Paired screen ───────────────────────────────────────────
 void DisplayManager::showPaired(const String& gwId, const String& name) {
     _l1 = "REGISTRADO";
     _l2 = "ID:" + gwId.substring(0, 16);
@@ -158,12 +173,14 @@ void DisplayManager::showPaired(const String& gwId, const String& name) {
     _render();
 }
 
+// ── Set battery state ───────────────────────────────────────
 void DisplayManager::setBattery(float pct, bool charging) {
     _batPct = pct;
     _batCharging = charging;
     _render();
 }
 
+// ── Header with mini battery widget ─────────────────────────
 void DisplayManager::_drawHeader() {
     _tft.setTextColor(COL_HDR, COL_BG);
     _tft.setTextSize(1);
@@ -171,33 +188,109 @@ void DisplayManager::_drawHeader() {
     _tft.print("EXALINK LORA GW");
     _tft.drawFastHLine(VIEW_X, VIEW_Y + 13, VIEW_W, COL_HDR);
 
-    // Battery indicator in header (right side)
-    if (_batPct >= 0.0f) {
-        uint16_t colBat = (_batPct <= 15.0f) ? COL_ERR : COL_OK;
-        _tft.setTextColor(colBat, COL_BG);
-        int bx = VIEW_X + VIEW_W - 42;
-        int by = VIEW_Y + 3;
-        // Draw battery outline: 18x10 box
-        _tft.drawRect(bx, by, 18, 10, colBat);
-        _tft.fillRect(bx + 18, by + 3, 2, 4, colBat); // nub
-        // Fill level
-        uint8_t fillW = (uint8_t)((_batPct / 100.0f) * 14.0f);
-        _tft.fillRect(bx + 2, by + 2, fillW, 6, colBat);
-        // % text
-        _tft.setTextSize(1);
-        _tft.setCursor(bx - 22, by + 1);
-        _tft.printf("%3d%%", (int)_batPct);
-        // Lightning icon if charging
-        if (_batCharging) {
-            _tft.setCursor(bx + 3, by - 1);
-            _tft.print("!");
-        }
+    // Mini battery widget (right side of header)
+    const int16_t bx = VIEW_X + VIEW_W - 34;  // x=126
+    const int16_t by = VIEW_Y + 1;             // y=25
+    const uint8_t bat = (_batPct >= 0.0f) ? (uint8_t)_batPct : 0;
+    const bool noBattery = (_batPct < 0.0f);
+
+    uint16_t outline = noBattery ? TFT_RED : COL_DIM;
+    if (!noBattery) {
+        if (_batCharging)           outline = COL_CHG;
+        else if (bat > 50)          outline = COL_OK;
+        else if (bat > 20)          outline = COL_WARN;
+        else                        outline = TFT_RED;
     }
+
+    _tft.drawRect(bx, by, 10, 6, outline);             // 10x6 outline
+    _tft.fillRect(bx + 10, by + 1, 2, 4, outline);    // terminal nub 2x4
+
+    // Fill: 8px max inside 1px border
+    uint8_t fillW = (uint8_t)(((uint32_t)bat * 8) / 100);
+    uint16_t fc;
+    if (noBattery)          fc = TFT_RED;
+    else if (_batCharging)  fc = COL_CHG;
+    else if (bat > 50)      fc = COL_OK;
+    else if (bat > 20)      fc = COL_WARN;
+    else                    fc = TFT_RED;
+
+    if (fillW > 0)
+        _tft.fillRect(bx + 1, by + 1, fillW, 4, fc);
+    if (fillW < 8)
+        _tft.fillRect(bx + 1 + fillW, by + 1, 8 - fillW, 4, COL_BG);
+
+    if (noBattery) {
+        _tft.drawLine(bx + 1, by + 1, bx + 8, by + 4, TFT_RED);
+        _tft.drawLine(bx + 8, by + 1, bx + 1, by + 4, TFT_RED);
+    } else if (_batCharging) {
+        drawSmallBatteryBolt(_tft, bx, by, TFT_BLACK);
+        drawSmallBatteryBolt(_tft, bx, by, COL_CHG);
+    }
+
+    // Percentage/status text
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.setTextSize(1);
+    _tft.setCursor(bx + 14, by);
+    char buf[6];
+    if (noBattery)              snprintf(buf, sizeof(buf), "--");
+    else if (_batCharging)      snprintf(buf, sizeof(buf), "CH");
+    else                        snprintf(buf, sizeof(buf), "%u%%", bat);
+    _tft.print(buf);
 }
 
+// ── Main body battery widget ────────────────────────────────
+void DisplayManager::_drawBattery() {
+    const int16_t x = VIEW_X + 2;   // x=2
+    const int16_t y = VIEW_Y + 68;  // y=92 (bottom area)
+
+    const uint8_t bat = (_batPct >= 0.0f) ? (uint8_t)_batPct : 0;
+    const bool noBattery = (_batPct < 0.0f);
+
+    // Color por nivel / estado
+    uint16_t fillColor;
+    if      (_batCharging)  fillColor = COL_CHG;
+    else if (bat > 50)      fillColor = COL_OK;
+    else if (bat > 20)      fillColor = COL_WARN;
+    else                    fillColor = TFT_RED;
+
+    uint16_t outline = noBattery ? TFT_RED : (_batCharging ? COL_CHG : COL_TEXT);
+
+    // Cuerpo (28x9) + terminal (3x5)
+    _tft.drawRect(x, y, 28, 9, outline);
+    _tft.fillRect(x + 28, y + 2, 3, 5, outline);
+
+    // Relleno interior (max 24px dentro de borde 2px)
+    uint8_t fillW = (uint8_t)(((uint32_t)bat * 24UL) / 100UL);
+    if (fillW > 0)
+        _tft.fillRect(x + 2, y + 2, fillW, 5, fillColor);
+    if (fillW < 24)
+        _tft.fillRect(x + 2 + fillW, y + 2, 24 - fillW, 5, COL_BG);
+
+    if (noBattery) {
+        _tft.drawLine(x + 3, y + 1, x + 25, y + 7, TFT_RED);
+        _tft.drawLine(x + 25, y + 1, x + 3, y + 7, TFT_RED);
+    } else if (_batCharging) {
+        drawBatteryBolt(_tft, x, y, TFT_BLACK);
+        drawBatteryBolt(_tft, x + 1, y, COL_CHG);
+    }
+
+    // Text to the right of battery icon
+    char buf[40];
+    if (noBattery)
+        snprintf(buf, sizeof(buf), "S/BAT");
+    else if (_batCharging)
+        snprintf(buf, sizeof(buf), "%u%% CARGA", bat);
+    else
+        snprintf(buf, sizeof(buf), "%u%%", bat);
+
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.setTextSize(1);
+    _tft.setCursor(x + 34, y + 1);
+    _tft.print(buf);
+}
+
+// ── Clear right edge artifact ───────────────────────────────
 void DisplayManager::_clearRightEdge() {
-    // Stable logical window maps to controller x=2..161, y=25..104.
-    // Try clearing the adjacent physical column outside TFT_eSPI clipping.
     _rawFillWindow(162, 25, 162, 104, COL_BG);
 }
 
@@ -224,9 +317,8 @@ void DisplayManager::_rawFillWindow(uint16_t xs, uint16_t ys,
     _tft.endWrite();
 }
 
+// ── Render ──────────────────────────────────────────────────
 void DisplayManager::_render() {
-    // Forzar render siempre (era throttled a 100ms, pero impedia que el
-    // codigo de pairing apareciera si showStatus se habia llamado recientemente)
     uint32_t now = millis();
     _lastUpdate = now;
 
@@ -247,5 +339,7 @@ void DisplayManager::_render() {
         _tft.setCursor(VIEW_X + 2, VIEW_Y + 53);
         _tft.print(_l4);
     }
+
+    _drawBattery();
     _clearRightEdge();
 }

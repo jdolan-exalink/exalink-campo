@@ -149,6 +149,7 @@ export default function MapPage() {
         lon: g.lon != null ? Number(g.lon) : (activeField?.lon ?? -60.6877),
         online: g.online,
         battery_pct: g.battery_pct,
+        charging: g.charging,
         last_seen: g.last_seen,
         device_count: g.device_count,
       }))

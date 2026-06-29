@@ -182,7 +182,7 @@ async def get_map_data(
     try:
         lora_conn = _get_lora_db()
         gw_rows = lora_conn.execute("""
-            SELECT g.gateway_id, g.name, g.lat, g.lon, g.battery_pct, g.last_seen,
+            SELECT g.gateway_id, g.name, g.lat, g.lon, g.battery_pct, g.charging, g.last_seen,
                    CASE WHEN g.last_seen IS NOT NULL AND g.last_seen > datetime('now', 'localtime', '-1 hours') THEN 1 ELSE 0 END AS online
             FROM gateways g
             WHERE g.lat IS NOT NULL AND g.lon IS NOT NULL
@@ -194,6 +194,7 @@ async def get_map_data(
                 "lat": r["lat"],
                 "lon": r["lon"],
                 "battery_pct": r["battery_pct"],
+                "charging": r["charging"],
                 "last_seen": r["last_seen"],
                 "online": r["online"],
             })
