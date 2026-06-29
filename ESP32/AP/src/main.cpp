@@ -472,7 +472,7 @@ if (held >= 10000) {
                                loraMgr.getPacketCount(), preview);
         _lastDispRefresh = millis();   // evitar sobreescritura por el refresh
 
-        // Enviar por HTTP si hay WiFi
+        // Enviar por HTTP al Flask server local
         if (wifiMgr.isSTAConnected()) {
             bool ok = httpPostLoRaPacket(
                 gwCfg.serverUrl,

@@ -539,10 +539,10 @@ void setup() {
     if (_rtc.bootCount == 1)
         _rtc.txIntervalMs = cfg.refreshFreqS * 1000UL;
 
-    // Entrar en modo pairing si no está provisionado
+    // Entrar en modo pairing si no está provisionado (pero seguir con LoRa)
     if (!cfg.isProvisioned && isColdBoot) {
         enterPairingMode();
-        return;   // No seguir con LoRa/GPS hasta que sea provisionado
+        // No return — seguir inicializando LoRa para enviar el código
     }
 
     // GPS UART
@@ -580,11 +580,10 @@ void setup() {
 void loop() {
     uint32_t now = millis();
 
-    // ── Modo pairing: esperar sin dormir, botón corto para refrescar pantalla ─
+    // ── Modo pairing: seguir haciendo TX con el código, display muestra pairing ─
     if (_pairingMode) {
         bool pressed = (digitalRead(BTN_PIN) == LOW);
         if (pressed) {
-            // Refresca la pantalla de pairing en cada pulsación
             enterPairingMode();
             delay(300);
         }
@@ -593,8 +592,15 @@ void loop() {
             cfgMgr.startPairing(cfg);
             enterPairingMode();
         }
-        // Mantener pantalla encendida mientras está en pairing
+        // Mantener pantalla encendida
         if (!display.isOn()) display.turnOn();
+
+        // TX periódico con el código de pairing (10s en modo pairing)
+        static uint32_t lastPairingTxMs = 0;
+        if (now - lastPairingTxMs >= 10000) {
+            doTx();
+            lastPairingTxMs = millis();
+        }
         delay(100);
         return;
     }

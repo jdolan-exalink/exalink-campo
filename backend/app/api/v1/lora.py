@@ -181,6 +181,158 @@ def _ensure_lora_schema() -> None:
 _ensure_lora_schema()
 
 
+# ── Ingest (recibe paquetes del GW) ─────────────────────────────
+
+@router.post("/ingest")
+async def ingest(payload: dict = Body(...)):
+    gw_id = payload.get("gateway_id", "?")
+    payload_hex = payload.get("payload_hex", "")
+    payload_json = payload.get("payload_json")
+
+    conn = _get_db()
+    try:
+        # Decode JSON payload
+        data = None
+        if payload_json:
+            try:
+                import json as _json
+                data = _json.loads(payload_json) if isinstance(payload_json, str) else payload_json
+            except Exception:
+                data = None
+        if data is None and payload_hex:
+            try:
+                raw = bytes.fromhex(payload_hex)
+                text = raw.decode("utf-8")
+                import json as _json
+                data = _json.loads(text)
+            except Exception:
+                data = None
+
+        dev_addr = None
+        temperature = humidity = battery = charging = None
+        wake_boots = wake_time_ms = None
+        a0x = a0y = a0z = a1x = a1y = a1z = None
+
+        if isinstance(data, dict):
+            dev_addr = data.get("d")
+            battery = data.get("b")
+            if battery is None:
+                battery = data.get("battery_pct")
+            temp = data.get("t")
+            if temp is None:
+                temp = data.get("temperature")
+            temperature = temp
+            hum = data.get("h")
+            if hum is None:
+                hum = data.get("humidity")
+            humidity = hum
+            charging = data.get("ch")
+            wake_boots = data.get("wb")
+            wake_time_ms = data.get("wt")
+            # Accelerometer
+            def _sf(v):
+                try:
+                    return float(v) if v is not None else None
+                except (ValueError, TypeError):
+                    return None
+            a0x = _sf(data.get("a0x"))
+            a0y = _sf(data.get("a0y"))
+            a0z = _sf(data.get("a0z"))
+            a1x = _sf(data.get("a1x"))
+            a1y = _sf(data.get("a1y"))
+            a1z = _sf(data.get("a1z"))
+
+        if not dev_addr and payload_hex:
+            dev_addr = "raw-" + payload_hex[:8]
+
+        # Store packet
+        conn.execute("""
+            INSERT INTO packets
+              (gateway_id, received_at, rssi, snr, freq_mhz, sf,
+               payload_hex, dev_addr, temperature, humidity, battery, charging,
+               wake_boots, wake_time_ms, mtype_str, fcnt,
+               a0x, a0y, a0z, a1x, a1y, a1z, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        """, (
+            gw_id,
+            payload.get("received_at", 0),
+            payload.get("rssi"),
+            payload.get("snr"),
+            payload.get("freq_mhz"),
+            payload.get("sf"),
+            payload_hex,
+            dev_addr,
+            temperature,
+            humidity,
+            battery,
+            charging,
+            wake_boots,
+            wake_time_ms,
+            (payload.get("lorawan") or {}).get("mtype_str"),
+            (payload.get("lorawan") or {}).get("fcnt"),
+            a0x, a0y, a0z, a1x, a1y, a1z,
+        ))
+
+        # Auto-register gateway
+        conn.execute(
+            "INSERT OR IGNORE INTO gateways (gateway_id, last_seen) VALUES (?, datetime('now', 'localtime'))",
+            (gw_id,),
+        )
+        conn.execute(
+            "UPDATE gateways SET last_seen = datetime('now', 'localtime') WHERE gateway_id = ?",
+            (gw_id,),
+        )
+
+        # Auto-register device
+        if dev_addr:
+            conn.execute(
+                "INSERT OR IGNORE INTO devices (dev_addr, last_seen) VALUES (?, datetime('now', 'localtime'))",
+                (dev_addr,),
+            )
+            # Update device latest values
+            updates = ["last_seen = datetime('now', 'localtime')"]
+            params = []
+            if data and data.get("lt") is not None:
+                updates.append("lat = ?"); params.append(data["lt"])
+            if data and data.get("ln") is not None:
+                updates.append("lon = ?"); params.append(data["ln"])
+            if battery is not None:
+                updates.append("battery_pct = ?"); params.append(battery)
+            if temperature is not None:
+                updates.append("temperature = ?"); params.append(temperature)
+            if humidity is not None:
+                updates.append("humidity = ?"); params.append(humidity)
+            if a0x is not None: updates.append("a0x = ?"); params.append(a0x)
+            if a0y is not None: updates.append("a0y = ?"); params.append(a0y)
+            if a0z is not None: updates.append("a0z = ?"); params.append(a0z)
+            if a1x is not None: updates.append("a1x = ?"); params.append(a1x)
+            if a1y is not None: updates.append("a1y = ?"); params.append(a1y)
+            if a1z is not None: updates.append("a1z = ?"); params.append(a1z)
+            # Pairing code
+            if data and data.get("pc"):
+                pairing_code = data["pc"]
+                existing_paired = conn.execute(
+                    "SELECT is_paired FROM devices WHERE dev_addr = ?", (dev_addr,)
+                ).fetchone()
+                is_already_paired = existing_paired and existing_paired["is_paired"]
+                if not is_already_paired:
+                    updates.append("pairing_code = ?"); params.append(pairing_code)
+                    updates.append("pairing_expires_at = datetime('now', 'localtime', '+10 minutes')")
+            conn.execute(
+                f"UPDATE devices SET {', '.join(updates)} WHERE dev_addr = ?",
+                params + [dev_addr],
+            )
+
+        conn.commit()
+        print(f"[INGEST] GW={gw_id} Dev={dev_addr} bat={battery}% temp={temperature}")
+        return {"ok": True}
+    except Exception as e:
+        print(f"[INGEST] ERROR: {e}")
+        return {"ok": False, "msg": str(e)}, 500
+    finally:
+        conn.close()
+
+
 # ── Packets ────────────────────────────────────────────────────────
 
 @router.get("/packets")
