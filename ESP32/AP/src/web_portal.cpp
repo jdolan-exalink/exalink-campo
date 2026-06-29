@@ -93,7 +93,10 @@ button:active{opacity:.8}
     <div style="font-size:.75em;color:#92400e;text-transform:uppercase;letter-spacing:.05em">Gateway ID</div>
     <div id="pairing_gw_id" style="font-family:monospace;font-size:1em;color:#1a56db;font-weight:600;margin:2px 0 8px;word-break:break-all"></div>
     <div style="font-size:.75em;color:#92400e;text-transform:uppercase;letter-spacing:.05em">Codigo de Pairing</div>
-    <div id="pairing_code" style="font-family:monospace;font-size:1.6em;color:#dc2626;font-weight:700;letter-spacing:.15em;margin:2px 0"></div>
+    <div style="text-align:center;line-height:1.15;margin:6px 0">
+      <div id="pairing_code_a" style="font-family:monospace;font-size:1.8em;color:#dc2626;font-weight:700;letter-spacing:.15em"></div>
+      <div id="pairing_code_b" style="font-family:monospace;font-size:1.8em;color:#dc2626;font-weight:700;letter-spacing:.15em"></div>
+    </div>
     <div style="font-size:.78em;color:#92400e;margin-top:6px">Expira en <span id="pairing_mins">--</span> min</div>
   </div>
   <button class="btn-p" onclick="regenPairing()">&#8635;&nbsp;Regenerar codigo</button>
@@ -307,10 +310,18 @@ async function fetchStatus(){
     }else{
       if(pcard)pcard.style.display='block';
       var pe=document.getElementById('pairing_gw_id');
-      var pc=document.getElementById('pairing_code');
+      var pca=document.getElementById('pairing_code_a');
+      var pcb=document.getElementById('pairing_code_b');
       var pm=document.getElementById('pairing_mins');
       if(pe)pe.textContent=d.gw_id;
-      if(pc)pc.textContent=d.pairing_code||'(sin codigo)';
+      var code=d.pairing_code||'';
+      if(code.length>=6){
+        if(pca)pca.textContent=code.substring(0,3);
+        if(pcb)pcb.textContent=code.substring(3,6);
+      }else{
+        if(pca)pca.textContent=code||'(sin codigo)';
+        if(pcb)pcb.textContent='';
+      }
       if(pm){
         var mins=d.pairing_expires_at?Math.max(0,Math.floor((d.pairing_expires_at-(Date.now()/1000))/60)):0;
         pm.textContent=mins;

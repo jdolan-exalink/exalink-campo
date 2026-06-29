@@ -91,11 +91,20 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
         ? (int32_t)((expiresEpoch - now) / 60)
         : 0;
 
-    _l1 = "PAIRING MODE";
-    String idLine = "ID:" + gwId.substring(0, 16);
-    _l2 = idLine;
-    _l3 = String("CODE: ") + code;
-    _l4 = String("Expira en ") + minsLeft + " min";
+    // 4 lineas disponibles en OLED 160x80:
+    //   L1: PAIRING + mins restantes
+    //   L2: ID del gateway
+    //   L3: primera mitad del codigo
+    //   L4: segunda mitad del codigo
+    _l1 = "** PAIRING **  " + String(minsLeft) + "m";
+    _l2 = "ID:" + gwId.substring(0, 16);
+    if (code.length() >= 6) {
+        _l3 = "Code: " + code.substring(0, 3);
+        _l4 = "      " + code.substring(3, 6);
+    } else {
+        _l3 = "Code: " + code;
+        _l4 = "";
+    }
     _render();
 }
 

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#0a0f1e"/>
+  <g fill="none" stroke="#22c55e" stroke-width="3" stroke-linecap="round">
+    <path d="M16 38 Q32 26 48 38"/>
+    <path d="M20 44 Q32 34 44 44"/>
+    <circle cx="32" cy="50" r="2.5" fill="#22c55e" stroke="none"/>
+  </g>
+  <text x="32" y="22" text-anchor="middle" font-family="monospace" font-size="10" font-weight="700" fill="#3b82f6">EXA</text>
+</svg>
