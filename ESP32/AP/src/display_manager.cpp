@@ -12,6 +12,8 @@
 DisplayManager::DisplayManager()
     : _tft()
     , _lastUpdate(0)
+    , _batPct(-1.0f)
+    , _batCharging(false)
 {}
 
 void DisplayManager::begin() {
@@ -156,12 +158,41 @@ void DisplayManager::showPaired(const String& gwId, const String& name) {
     _render();
 }
 
+void DisplayManager::setBattery(float pct, bool charging) {
+    _batPct = pct;
+    _batCharging = charging;
+    _render();
+}
+
 void DisplayManager::_drawHeader() {
     _tft.setTextColor(COL_HDR, COL_BG);
     _tft.setTextSize(1);
     _tft.setCursor(VIEW_X + 2, VIEW_Y + 2);
     _tft.print("EXALINK LORA GW");
     _tft.drawFastHLine(VIEW_X, VIEW_Y + 13, VIEW_W, COL_HDR);
+
+    // Battery indicator in header (right side)
+    if (_batPct >= 0.0f) {
+        uint16_t colBat = (_batPct <= 15.0f) ? COL_ERR : COL_OK;
+        _tft.setTextColor(colBat, COL_BG);
+        int bx = VIEW_X + VIEW_W - 42;
+        int by = VIEW_Y + 3;
+        // Draw battery outline: 18x10 box
+        _tft.drawRect(bx, by, 18, 10, colBat);
+        _tft.fillRect(bx + 18, by + 3, 2, 4, colBat); // nub
+        // Fill level
+        uint8_t fillW = (uint8_t)((_batPct / 100.0f) * 14.0f);
+        _tft.fillRect(bx + 2, by + 2, fillW, 6, colBat);
+        // % text
+        _tft.setTextSize(1);
+        _tft.setCursor(bx - 22, by + 1);
+        _tft.printf("%3d%%", (int)_batPct);
+        // Lightning icon if charging
+        if (_batCharging) {
+            _tft.setCursor(bx + 3, by - 1);
+            _tft.print("!");
+        }
+    }
 }
 
 void DisplayManager::_clearRightEdge() {

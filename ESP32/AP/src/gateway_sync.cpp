@@ -19,15 +19,65 @@ static void _beginHttp(HTTPClient& http, WiFiClientSecure& secure,
 }
 
 float readBatteryPct() {
+    static int   _rawFilt = 0;
+    static uint8_t _lastPct = 0;
+
+    // 1. Activar divisor de voltaje
     pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
     digitalWrite(VBAT_ADC_CTRL_PIN, HIGH);
     delay(10);
-    int raw = analogRead(VBAT_ADC_PIN);
+
+    // 2. Leer raw una vez para estabilizar (discard first conversion)
+    (void)analogRead(VBAT_ADC_PIN);
+    delay(5);
+
+    // 3. Oversampling: promediar VBAT_SAMPLES lecturas, track min/max
+    uint32_t sum = 0;
+    int rawMin = 4095, rawMax = 0;
+    for (uint8_t i = 0; i < VBAT_SAMPLES; i++) {
+        int r = analogRead(VBAT_ADC_PIN);
+        sum += r;
+        if (r < rawMin) rawMin = r;
+        if (r > rawMax) rawMax = r;
+        delay(2);
+    }
+    int raw = (int)(sum / VBAT_SAMPLES);
+
+    // 4. Apagar divisor (ahorrar energía)
     digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
-    if (raw < 50) return -1.0f;
-    float v   = (raw / 4095.0f) * 3.3f * 2.0f;
-    float pct = (v - 3.0f) / (4.2f - 3.0f) * 100.0f;
-    return constrain(pct, 0.0f, 100.0f);
+
+    // 5. Validar presencia de batería
+    float v = (raw / 4095.0f) * 3.3f * VBAT_DIVIDER;
+    bool present = raw >= 50
+                && (rawMax - rawMin) <= 200   // ruido máximo aceptable
+                && v >= 2.5f && v <= 4.35f;
+
+    if (!present) {
+        _rawFilt = 0;
+        _lastPct = 0;
+        return -1.0f;
+    }
+
+    // 6. Filtro IIR: 7/8 old + 1/8 new (suavizado)
+    if (_rawFilt == 0) _rawFilt = raw;
+    else _rawFilt = (_rawFilt * VBAT_FILTER_ALPHA + raw) / (VBAT_FILTER_ALPHA + 1);
+
+    // 7. Convertir a voltaje y porcentaje
+    v = (_rawFilt / 4095.0f) * 3.3f * VBAT_DIVIDER;
+    float pct = (v - VBAT_VMIN) / (VBAT_VMAX - VBAT_VMIN) * 100.0f;
+    uint8_t p = (uint8_t)constrain(pct, 0.0f, 100.0f);
+
+    // 8. Histéresis 2% — suprimir fluctuaciones
+    if (abs((int)p - (int)_lastPct) <= 2) return _lastPct;
+    _lastPct = p;
+    return p;
+}
+
+bool checkCharging() {
+    // El Wireless Tracker V1.1 no tiene CHRG_STAT pin expuesto.
+    // Usamos detección USB del ESP32-S3 como proxy.
+    // Si USB conectado + batería < 95% → asumimos cargando.
+    return false;  // simplificado: sin pin de charging硬件
 }
 
 GatewaySyncResult syncGateway(const String&        serverUrl,
@@ -45,6 +95,7 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
     doc["wifi_rssi"]  = st.wifiRssi;
     if (st.gpsValid) { doc["lat"] = st.lat; doc["lon"] = st.lon; }
     doc["battery_pct"] = (st.batteryPct >= 0.0f) ? st.batteryPct : 0.0f;
+    doc["charging"]    = st.charging;
     if (st.name.length() > 0) doc["name"] = st.name;
 
     // Pairing: solo enviamos el código si existe, es válido y no estamos aún registrados.

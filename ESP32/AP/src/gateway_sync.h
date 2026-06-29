@@ -8,12 +8,13 @@ struct GatewayStatus {
     int      wifiRssi;
     String   wifiSsid;
     float    batteryPct;
+    bool     charging;
     uint32_t uptimeSec;
     uint32_t pktsTotal;
     String   name;
-    bool     isPaired;          // true si ya fue registrado en la app
-    String   pairingCode;       // código temporal (vacío si no está en pairing)
-    uint32_t pairingExpiresAt;  // epoch seconds, 0 si no aplica
+    bool     isPaired;
+    String   pairingCode;
+    uint32_t pairingExpiresAt;
 };
 
 struct GatewaySyncResult {
@@ -36,3 +37,4 @@ bool resetDeviceProvision(const String& serverUrl,
                           const String& deviceUid);
 
 float readBatteryPct();
+bool  checkCharging();

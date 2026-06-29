@@ -84,6 +84,7 @@ static void doGatewaySync() {
     st.wifiRssi    = WiFi.RSSI();
     st.name        = gwCfg.gatewayName;
     st.batteryPct  = readBatteryPct();
+    st.charging    = checkCharging();
     st.uptimeSec   = millis() / 1000;
     st.pktsTotal   = loraMgr.getPacketCount();
     st.isPaired        = gwCfg.isPaired;
@@ -95,6 +96,7 @@ static void doGatewaySync() {
                                         gwCfg.lorawanPass, st);
     _lastSyncLatencyMs = res.ok ? (int32_t)(millis() - t0) : -1;
     if (portal) portal->setServerOk(res.ok, _lastSyncLatencyMs);
+    display.setBattery(st.batteryPct, st.charging);
 
     if (res.ok) {
         if (res.name.length() > 0 && res.name != gwCfg.gatewayName) {

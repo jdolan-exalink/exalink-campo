@@ -17,12 +17,15 @@ public:
     void showPairing(const String& gwId, const String& code,
                      uint32_t expiresEpoch);
     void showPaired(const String& gwId, const String& name);
+    void setBattery(float pct, bool charging);
 
 private:
     TFT_eSPI _tft;
 
     String   _l1, _l2, _l3, _l4;
     uint32_t _lastUpdate;
+    float    _batPct;
+    bool     _batCharging;
 
     static constexpr int16_t VIEW_X = 0;
     static constexpr int16_t VIEW_Y = 24;
