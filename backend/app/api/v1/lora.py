@@ -435,8 +435,12 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
                 updates.append(f"{col} = ?")
                 params.append(payload[json_key])
 
-        # pairing_code y expiry sólo si vienen (y solo si NO está paired)
-        if payload.get("pairing_code") and not payload.get("is_paired"):
+        # pairing_code y expiry sólo si viene y el GW NO está paired en la DB
+        existing_paired = conn.execute(
+            "SELECT is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
+        ).fetchone()
+        is_already_paired = existing_paired and existing_paired["is_paired"]
+        if payload.get("pairing_code") and not is_already_paired:
             updates.append("pairing_code = ?")
             params.append(payload["pairing_code"])
             if payload.get("pairing_expires_at"):

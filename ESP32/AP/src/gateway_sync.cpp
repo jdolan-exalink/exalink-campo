@@ -57,7 +57,8 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
             doc["pairing_active"]         = true;
         }
     }
-    doc["is_paired"] = st.isPaired;
+    // NO enviamos is_paired — el backend maneja ese estado via /pair.
+    // Si lo enviamos como false, el backend viejo sobreescribe is_paired=1 a 0.
 
     String body;
     serializeJson(doc, body);
@@ -95,8 +96,8 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
         result.isPaired      = respDoc["is_paired"] | false;
     }
 
-    Serial.printf("[GW-SYNC] OK — name='%s' provisioned=%d\n",
-                  result.name.c_str(), (int)result.isProvisioned);
+    Serial.printf("[GW-SYNC] OK — name='%s' provisioned=%d paired=%d\n",
+                  result.name.c_str(), (int)result.isProvisioned, (int)result.isPaired);
     return result;
 }
 

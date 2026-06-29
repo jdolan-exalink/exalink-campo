@@ -525,7 +525,12 @@ def gateway_sync():
         "wifi_ip":     "wifi_ip",
         # is_paired NO se actualiza desde sync — solo el endpoint /pair lo cambia
     }
-    if "pairing_code" in data and data["pairing_code"]:
+    # pairing_code sólo si el GW NO está paired en la DB
+    existing_paired = conn.execute(
+        "SELECT is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
+    ).fetchone()
+    is_already_paired = existing_paired and existing_paired["is_paired"]
+    if "pairing_code" in data and data["pairing_code"] and not is_already_paired:
         field_map["pairing_code"]       = "pairing_code"
         field_map["pairing_expires_at"] = "pairing_expires_at"
     for json_key, col in field_map.items():

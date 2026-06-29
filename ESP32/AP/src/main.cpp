@@ -342,8 +342,13 @@ if (held >= 10000) {
         doGatewaySync();
     }
 
-    // ── Sync periódico según intervalo configurado ────────────
-    uint32_t syncIntervalMs = (uint32_t)gwCfg.syncIntervalMin * 60UL * 1000UL;
+    // ── Sync periódico — cada 30s si no está paired, según config si sí ──
+    uint32_t syncIntervalMs;
+    if (!gwCfg.isPaired) {
+        syncIntervalMs = 30000;  // 30s en modo pairing para detectar registro rápido
+    } else {
+        syncIntervalMs = (uint32_t)gwCfg.syncIntervalMin * 60UL * 1000UL;
+    }
     if (wifiMgr.isSTAConnected() &&
         millis() - _lastSyncMs >= syncIntervalMs) {
         doGatewaySync();
@@ -366,18 +371,32 @@ if (held >= 10000) {
     // ── Refresco periódico pantalla cada 5 s ──────────────────
     if (millis() - _lastDispRefresh >= 5000) {
         _lastDispRefresh = millis();
-        // Si no esta registrado pero el codigo expiro o no existe, regenerar YA
-        if (!gwCfg.isPaired &&
-            (gwCfg.pairingCode.isEmpty() || !cfgMgr.isPairingCodeValid(gwCfg))) {
-            cfgMgr.startPairing(gwCfg);
-            Serial.printf("[Pairing] Codigo regenerado: %s (expira %lu)\n",
-                          gwCfg.pairingCode.c_str(),
-                          (unsigned long)gwCfg.pairingExpiresAt);
+        // Si no esta registrado, regenerar código cuando está por expirar o ya expiró
+        if (!gwCfg.isPaired) {
+            bool expired = gwCfg.pairingCode.isEmpty() ||
+                           !cfgMgr.isPairingCodeValid(gwCfg);
+            bool expiringSoon = false;
+            if (!expired && gwCfg.pairingExpiresAt > 0) {
+                uint32_t now = (uint32_t)time(nullptr);
+                if (now < 60) now = (uint32_t)(millis() / 1000);
+                expiringSoon = (gwCfg.pairingExpiresAt - now) < 60;  // < 1 min
+            }
+            if (expired || expiringSoon) {
+                cfgMgr.startPairing(gwCfg);
+                Serial.printf("[Pairing] Codigo regenerado: %s (expira %lu)\n",
+                              gwCfg.pairingCode.c_str(),
+                              (unsigned long)gwCfg.pairingExpiresAt);
+                _lastSyncMs = 0;  // forzar sync inmediato para que el backend reciba el nuevo código
+            }
         }
         // Mostrar codigo de pairing si esta disponible
         if (!gwCfg.isPaired &&
             gwCfg.pairingCode.length() > 0 &&
             cfgMgr.isPairingCodeValid(gwCfg)) {
+            display.showPairing(gwCfg.gatewayId, gwCfg.pairingCode,
+                                gwCfg.pairingExpiresAt);
+        } else if (!gwCfg.isPaired) {
+            // Sin código activo: mostrar aviso
             display.showPairing(gwCfg.gatewayId, gwCfg.pairingCode,
                                 gwCfg.pairingExpiresAt);
         } else {
