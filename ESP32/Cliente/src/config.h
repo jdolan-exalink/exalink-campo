@@ -36,8 +36,17 @@
 #define AHT21B_SDA_PIN    7
 #define AHT21B_SCL_PIN    6
 
+// MPU6050 — I2C (bus separado)
+#define MPU6050_SDA_PIN    4
+#define MPU6050_SCL_PIN    5
+
+// MP3-TF-16P — UART1
+#define MP3_RX_PIN        18   // ESP32 RX ← MP3 TX
+#define MP3_TX_PIN        17   // ESP32 TX → MP3 RX
+
 // Botón PRG (activo LOW, pullup interno)
 #define BTN_PIN      0
+#define BUZZER_PIN   16   // Piezo/buzzer para tonos de arranque
 
 // LED RGB integrado (WS2812B, 1 píxel)
 // Comparte GPIO 35 con el reset del GPS — mantener HIGH para no resetear GNSS
@@ -134,12 +143,20 @@
 #define NVS_KEY_REFRESH_FREQ_S     "refresh_s"
 #define NVS_KEY_HW_VERSION         "hw_ver"
 #define NVS_KEY_IS_PROVISIONED     "is_prov"
+#define NVS_KEY_PAIR_CODE          "pair_code"
+#define NVS_KEY_PAIR_EXP           "pair_exp"
 
 // ============================================================
 // Botón — lógica de pairing
 // ============================================================
 #define BTN_LONG_PRESS_MS   10000UL   // 10s → reset a modo pairing
 #define PAIRING_DISPLAY_MS  30000UL   // cuánto mostrar pairing sin deep sleep
+
+// ============================================================
+// Pairing — código temporal (mismo método que GW)
+// ============================================================
+#define PAIRING_CODE_LEN    6
+#define PAIRING_TTL_MIN     10   // minutos de validez del código
 
 // ============================================================
 // Misc

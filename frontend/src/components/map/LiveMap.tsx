@@ -5,7 +5,7 @@ import { Maximize2, Minimize2 } from 'lucide-react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import api from '@/lib/api'
-import type { MapAnimal, MapData, MapGateway, TemperatureHistoryResponse, BatteryHistoryResponse, ConsumptionResponse } from '@/types'
+import type { MapAnimal, MapData, MapGateway, TemperatureHistoryResponse, BatteryHistoryResponse, ConsumptionResponse, AccelHistoryResponse } from '@/types'
 
 const batteryColor = (battery: number | null) => {
   if (battery == null) return '#94a3b8'
@@ -70,6 +70,11 @@ const alertSvg = () => `
     <circle cx="12" cy="17" r="1.2" fill="#0f172a"/>
   </svg>`
 
+const movingSvg = () => `
+  <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+    <path d="M3 12h4l3-9 4 18 3-9h4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`
+
 const formatTemperature = (temperature: number | null | undefined) => {
   if (temperature == null || Number.isNaN(temperature)) return 'N/D'
   return `${temperature.toFixed(1)}°C`
@@ -82,11 +87,15 @@ const createDeviceIcon = (device: MapAnimal, highlighted: boolean) => {
     color = '#64748b'
   }
   const batColor = batteryColor(device.battery_pct)
+  const movingBadge = device.movement === 'moving'
+    ? `<span class="map-marker-moving" title="En movimiento">${movingSvg()}</span>`
+    : ''
   return L.divIcon({
     className: '',
     html: `
-      <div class="map-marker-c ${device.outside_field ? 'map-marker-c-alert' : ''} ${highlighted ? 'map-marker-c-highlight' : ''}" style="--mrk-color:${color};--mrk-bat:${batColor}">
+      <div class="map-marker-c ${device.outside_field ? 'map-marker-c-alert' : ''} ${highlighted ? 'map-marker-c-highlight' : ''} ${device.movement === 'moving' ? 'map-marker-c-moving' : ''}" style="--mrk-color:${color};--mrk-bat:${batColor}">
         <span class="map-marker-c-icon" data-marker-part="icon">${device.outside_field ? alertSvg() : style.glyph}</span>
+        ${movingBadge}
         <span class="map-marker-c-temp" data-marker-part="temp">${formatTemperature(device.temperature)}</span>
         <span class="map-marker-c-batt" data-marker-part="battery">
           <svg viewBox="0 0 12 8" width="12" height="8"><rect x="1" y="1" width="8" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1"/><rect x="10" y="2.5" width="1.5" height="3" rx="0.5" fill="currentColor"/><rect x="2" y="2" width="${device.battery_pct != null ? Math.max(0, Math.min(6, Math.round(device.battery_pct / 100 * 6))) : 0}" height="4" rx="0.5" fill="currentColor"/></svg>
@@ -185,6 +194,14 @@ function IconTooltip({ device, enabled }: { device: MapAnimal; enabled: boolean 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
         <p>Batería: <span style={{ color: batteryColor(device.battery_pct) }} className="font-semibold">{device.battery_pct != null ? Math.round(device.battery_pct) + '%' : '--'}</span></p>
         <p>Temp: <span className="font-semibold text-red-500">{formatTemperature(device.temperature)}</span></p>
+        {device.movement === 'moving' && <p className="col-span-2 font-semibold text-amber-600 flex items-center gap-1">⚡ En movimiento</p>}
+        {device.movement === 'still' && <p className="col-span-2 text-slate-500">● Quiet</p>}
+        {(device.a0x != null || device.a1x != null) && (
+          <p className="col-span-2 text-[10px] text-slate-500 font-mono">
+            Acel: {device.a0x != null ? `${device.a0x.toFixed(2)},${device.a0y?.toFixed(2)},${device.a0z?.toFixed(2)}g` : '--'}
+            {device.a1x != null ? ` | ${device.a1x.toFixed(2)},${device.a1y?.toFixed(2)},${device.a1z?.toFixed(2)}g` : ''}
+          </p>
+        )}
         {cons && cons.samples >= 2 && (
           <>
             <p>Autonomía: <span className="font-semibold text-slate-700">{cons.autonomy_days != null ? `~${cons.autonomy_days} días` : '--'}</span></p>

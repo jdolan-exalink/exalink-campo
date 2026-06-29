@@ -73,32 +73,36 @@ bool postEquipment(const String& serverUrl,
                    float battery,
                    float temperature,
                    float humidity,
+                   const MpuReading& mpu0,
+                   const MpuReading& mpu1,
                    uint32_t& outRefreshS,
                    String&   outName) {
-    DynamicJsonDocument doc(512);
+    DynamicJsonDocument doc(640);
     doc["dev_addr"]    = "raw-" + devAddrHex;
     doc["name"]        = name.length() ? name : devAddrHex;
     doc["device_type"] = devType;
     doc["hw_version"]  = HW_VERSION_DEFAULT;
     doc["wifi_ssid"]   = wifiSsid;
     doc["wifi_rssi"]   = wifiRssi;
-    doc["battery_pct"] = battery;   // float: 85.3
-    if (!isnan(temperature)) {
-        doc["temperature"] = temperature;
-    } else {
-        doc["temperature"] = nullptr;
+    doc["battery_pct"] = battery;
+    if (!isnan(temperature)) doc["temperature"] = temperature;
+    else doc["temperature"] = nullptr;
+    if (!isnan(humidity)) doc["humidity"] = humidity;
+    else doc["humidity"] = nullptr;
+    if (gpsValid) { doc["lat"] = lat; doc["lon"] = lon; }
+    else { doc["lat"] = nullptr; doc["lon"] = nullptr; }
+    // MPU6050
+    if (mpu0.valid) {
+        doc["accel0_x"] = mpu0.ax;
+        doc["accel0_y"] = mpu0.ay;
+        doc["accel0_z"] = mpu0.az;
+        doc["mpu0_temp"] = mpu0.tempC;
     }
-    if (!isnan(humidity)) {
-        doc["humidity"] = humidity;
-    } else {
-        doc["humidity"] = nullptr;
-    }
-    if (gpsValid) {
-        doc["lat"] = lat;
-        doc["lon"] = lon;
-    } else {
-        doc["lat"] = nullptr;
-        doc["lon"] = nullptr;
+    if (mpu1.valid) {
+        doc["accel1_x"] = mpu1.ax;
+        doc["accel1_y"] = mpu1.ay;
+        doc["accel1_z"] = mpu1.az;
+        doc["mpu1_temp"] = mpu1.tempC;
     }
 
     String body;

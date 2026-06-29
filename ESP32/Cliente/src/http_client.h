@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "mpu6050_sensor.h"
 
 // Obtiene la configuración del dispositivo desde el servidor.
 // Devuelve true si el servidor respondió OK.
@@ -20,6 +21,8 @@ bool postEquipment(const String& serverUrl,
                    float battery,
                    float temperature,
                    float humidity,
+                   const MpuReading& mpu0,
+                   const MpuReading& mpu1,
                    uint32_t& outRefreshS,
                    String&   outName);
 

@@ -105,6 +105,9 @@ def _init_db():
         conn.execute("ALTER TABLE packets ADD COLUMN wake_boots INTEGER")
     if "wake_time_ms" not in existing_packet_columns:
         conn.execute("ALTER TABLE packets ADD COLUMN wake_time_ms INTEGER")
+    for col in ("a0x", "a0y", "a0z", "a1x", "a1y", "a1z"):
+        if col not in existing_packet_columns:
+            conn.execute(f"ALTER TABLE packets ADD COLUMN {col} REAL")
     existing_device_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "temperature" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN temperature REAL")
@@ -112,6 +115,9 @@ def _init_db():
         conn.execute("ALTER TABLE devices ADD COLUMN humidity REAL")
     if "gps_fresh" not in existing_device_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN gps_fresh INTEGER DEFAULT 0")
+    for col in ("a0x", "a0y", "a0z", "a1x", "a1y", "a1z"):
+        if col not in existing_device_columns:
+            conn.execute(f"ALTER TABLE devices ADD COLUMN {col} REAL")
     existing_gw_columns = {row["name"] for row in conn.execute("PRAGMA table_info(gateways)").fetchall()}
     if "wifi_ip" not in existing_gw_columns:
         conn.execute("ALTER TABLE gateways ADD COLUMN wifi_ip TEXT")
@@ -130,6 +136,12 @@ def _init_db():
     existing_dev2_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "wifi_ip" not in existing_dev2_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN wifi_ip TEXT")
+    if "pairing_code" not in existing_dev2_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN pairing_code TEXT")
+    if "pairing_expires_at" not in existing_dev2_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN pairing_expires_at TIMESTAMP")
+    if "is_paired" not in existing_dev2_columns:
+        conn.execute("ALTER TABLE devices ADD COLUMN is_paired INTEGER DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -168,6 +180,16 @@ def _check_auth():
     if AUTH_PASSWORD and auth != expected:
         return False
     return True
+
+
+def _safe_float(val):
+    """Convert a value to float, returning None if not possible."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
 
 
 def _try_decode_payload(conn, payload_hex=None, payload_json=None):
@@ -210,6 +232,17 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
     wake_boots = data.get("wb")
     wake_time_ms = data.get("wt")
 
+    # MPU6050 accelerometer
+    a0x = _safe_float(data.get("a0x"))
+    a0y = _safe_float(data.get("a0y"))
+    a0z = _safe_float(data.get("a0z"))
+    a1x = _safe_float(data.get("a1x"))
+    a1y = _safe_float(data.get("a1y"))
+    a1z = _safe_float(data.get("a1z"))
+
+    # Pairing code
+    pairing_code = data.get("pc")
+
     dev_addr = data.get("d")
     if not dev_addr:
         return None
@@ -243,6 +276,24 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
     if data.get("g") is not None:
         updates.append("gps_fresh = ?"); params.append(data["g"])
 
+    # MPU6050 accelerometer
+    if a0x is not None: updates.append("a0x = ?"); params.append(a0x)
+    if a0y is not None: updates.append("a0y = ?"); params.append(a0y)
+    if a0z is not None: updates.append("a0z = ?"); params.append(a0z)
+    if a1x is not None: updates.append("a1x = ?"); params.append(a1x)
+    if a1y is not None: updates.append("a1y = ?"); params.append(a1y)
+    if a1z is not None: updates.append("a1z = ?"); params.append(a1z)
+
+    # Pairing code (solo si el device no está ya pareado)
+    if pairing_code:
+        existing_paired = conn.execute(
+            "SELECT is_paired FROM devices WHERE dev_addr = ?", (dev_addr,)
+        ).fetchone()
+        is_already_paired = existing_paired and existing_paired["is_paired"]
+        if not is_already_paired:
+            updates.append("pairing_code = ?"); params.append(pairing_code)
+            updates.append("pairing_expires_at = datetime('now', 'localtime', '+10 minutes')")
+
     conn.execute(
         f"UPDATE devices SET {', '.join(updates)} WHERE dev_addr = ?",
         params + [dev_addr],
@@ -261,6 +312,8 @@ def _try_decode_payload(conn, payload_hex=None, payload_json=None):
         "lat": data.get("lt"),
         "lon": data.get("ln"),
         "device_type": data.get("tp"),
+        "a0x": a0x, "a0y": a0y, "a0z": a0z,
+        "a1x": a1x, "a1y": a1y, "a1z": a1z,
     }
 
 
@@ -335,11 +388,19 @@ def ingest():
     charging = decoded.get("charging") if decoded else None
     wake_boots = decoded.get("wake_boots") if decoded else None
     wake_time_ms = decoded.get("wake_time_ms") if decoded else None
+    a0x = decoded.get("a0x") if decoded else None
+    a0y = decoded.get("a0y") if decoded else None
+    a0z = decoded.get("a0z") if decoded else None
+    a1x = decoded.get("a1x") if decoded else None
+    a1y = decoded.get("a1y") if decoded else None
+    a1z = decoded.get("a1z") if decoded else None
     conn.execute("""
         INSERT INTO packets
           (gateway_id, received_at, rssi, snr, freq_mhz, sf,
-           payload_hex, dev_addr, temperature, humidity, battery, charging, wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+           payload_hex, dev_addr, temperature, humidity, battery, charging,
+           wake_boots, wake_time_ms, mtype_str, fcnt,
+           a0x, a0y, a0z, a1x, a1y, a1z, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     """, (
         pkt["gateway_id"],
         pkt["received_at"],
@@ -357,6 +418,7 @@ def ingest():
         wake_time_ms,
         (pkt.get("lorawan") or {}).get("mtype_str"),
         (pkt.get("lorawan") or {}).get("fcnt"),
+        a0x, a0y, a0z, a1x, a1y, a1z,
     ))
     # Auto-register unknown gateway
     conn.execute(
@@ -641,6 +703,107 @@ def gateway_pair():
 
     print(f"[PAIR] GW={gw_id} registrado como '{final_name}'")
     return jsonify({"ok": True, "gateway_id": gw_id, "name": final_name}), 200
+
+
+@app.route("/api/lora/device/pair", methods=["POST"])
+def device_pair():
+    if not _check_auth():
+        return jsonify({"ok": False, "msg": "No autorizado"}), 401
+
+    data = request.get_json(silent=True) or {}
+    code = (data.get("pairing_code") or "").strip()
+    name = (data.get("name") or "").strip()
+    hint_dev = (data.get("dev_addr") or "").strip() or None
+
+    if not code:
+        return jsonify({"ok": False, "msg": "pairing_code requerido"}), 400
+
+    conn = _get_db()
+
+    # Buscar por código primero
+    row = conn.execute(
+        "SELECT dev_addr, pairing_code, pairing_expires_at, is_paired, name "
+        "FROM devices "
+        "WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
+        "AND pairing_expires_at IS NOT NULL "
+        "AND datetime(pairing_expires_at) > datetime('now', 'localtime') "
+        "ORDER BY pairing_expires_at DESC LIMIT 1",
+        (code,),
+    ).fetchone()
+
+    # Si no encontró por código pero el usuario dio un dev_addr
+    if not row and hint_dev:
+        row = conn.execute(
+            "SELECT dev_addr, pairing_code, pairing_expires_at, is_paired, name "
+            "FROM devices WHERE dev_addr = ?",
+            (hint_dev,),
+        ).fetchone()
+        if row and (row["pairing_code"] or "") != code:
+            conn.close()
+            return jsonify({"ok": False, "msg": "El codigo no corresponde a este dispositivo."}), 403
+
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "msg": "Codigo de pairing invalido o expirado."}), 403
+
+    if row["is_paired"]:
+        conn.close()
+        return jsonify({"ok": False, "msg": "El dispositivo ya esta registrado."}), 409
+
+    dev_addr = row["dev_addr"]
+    final_name = name if name else dev_addr
+
+    conn.execute(
+        """
+        UPDATE devices
+           SET is_paired = 1,
+               name = ?,
+               pairing_code = NULL,
+               pairing_expires_at = NULL,
+               updated_at = datetime('now', 'localtime'),
+               last_seen = datetime('now', 'localtime')
+         WHERE dev_addr = ?
+        """,
+        (final_name, dev_addr),
+    )
+    conn.commit()
+    conn.close()
+
+    print(f"[PAIR] Device={dev_addr} registrado como '{final_name}'")
+    return jsonify({"ok": True, "dev_addr": dev_addr, "name": final_name}), 200
+
+
+@app.route("/api/lora/devices/pending", methods=["GET"])
+def devices_pending():
+    if not _check_auth():
+        return jsonify({"ok": False, "msg": "No autorizado"}), 401
+
+    conn = _get_db()
+    rows = conn.execute(
+        "SELECT dev_addr, name, device_type, pairing_code, pairing_expires_at, "
+        "battery_pct, last_seen "
+        "FROM devices "
+        "WHERE COALESCE(is_paired, 0) = 0 "
+        "AND pairing_code IS NOT NULL "
+        "AND pairing_expires_at IS NOT NULL "
+        "AND datetime(pairing_expires_at) > datetime('now', 'localtime') "
+        "ORDER BY last_seen DESC"
+    ).fetchall()
+    conn.close()
+
+    devices = []
+    for r in rows:
+        devices.append({
+            "dev_addr": r["dev_addr"],
+            "name": r["name"],
+            "device_type": r["device_type"],
+            "pairing_code": r["pairing_code"],
+            "pairing_expires_at": r["pairing_expires_at"],
+            "battery_pct": r["battery_pct"],
+            "last_seen": r["last_seen"],
+        })
+
+    return jsonify({"devices": devices}), 200
 
 
 # ── Equipment (devices) ────────────────────────────────────────────

@@ -50,9 +50,11 @@ bool LoRaClient::begin(float freq) {
 
 bool LoRaClient::send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery,
                        float temperatureC, float humidityPct, bool gpsFresh,
-                       bool charging, uint32_t bootCount, uint32_t wakeMs) {
+                       bool charging, uint32_t bootCount, uint32_t wakeMs,
+                       const MpuReading& mpu0, const MpuReading& mpu1,
+                       const String& pairingCode) {
     // Construir payload JSON compacto
-    DynamicJsonDocument doc(448);
+    DynamicJsonDocument doc(576);
     doc["d"]  = "raw-" + getDevAddrHex();
     doc["tp"] = "animal";
     if (gps.valid) {
@@ -76,21 +78,30 @@ bool LoRaClient::send(const GpsData& gps, bool gpsModuleSeen, uint8_t battery,
                   + (uint32_t)gps.utcMin * 100UL
                   + (uint32_t)gps.utcSec;
     }
-    if (!isnan(temperatureC)) {
-        doc["t"] = temperatureC;
-    } else {
-        doc["t"] = nullptr;
-    }
-    if (!isnan(humidityPct)) {
-        doc["h"] = humidityPct;
-    } else {
-        doc["h"] = nullptr;
-    }
+    if (!isnan(temperatureC)) doc["t"] = temperatureC;
+    else doc["t"] = nullptr;
+    if (!isnan(humidityPct)) doc["h"] = humidityPct;
+    else doc["h"] = nullptr;
     doc["b"]  = battery;
     doc["ch"] = charging ? 1 : 0;
     doc["wb"] = bootCount;
     doc["wt"] = wakeMs;
     doc["hv"] = HW_VERSION_DEFAULT;
+    // MPU6050 sensors
+    if (mpu0.valid) {
+        doc["a0x"] = serialized(String(mpu0.ax, 2));
+        doc["a0y"] = serialized(String(mpu0.ay, 2));
+        doc["a0z"] = serialized(String(mpu0.az, 2));
+    }
+    if (mpu1.valid) {
+        doc["a1x"] = serialized(String(mpu1.ax, 2));
+        doc["a1y"] = serialized(String(mpu1.ay, 2));
+        doc["a1z"] = serialized(String(mpu1.az, 2));
+    }
+    // Pairing code (temporal, se envía mientras no esté provisionado)
+    if (pairingCode.length() > 0) {
+        doc["pc"] = pairingCode;
+    }
 
     String json;
     serializeJson(doc, json);

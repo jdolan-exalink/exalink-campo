@@ -17,6 +17,8 @@ void ConfigManager::load(ClientConfig& cfg) {
     cfg.hwVersion    = _prefs.getString(NVS_KEY_HW_VERSION,     HW_VERSION_DEFAULT);
     cfg.refreshFreqS = _prefs.getUInt(  NVS_KEY_REFRESH_FREQ_S, TX_INTERVAL_MS / 1000);
     cfg.isProvisioned = _prefs.getBool( NVS_KEY_IS_PROVISIONED,  false);
+    cfg.pairingCode      = _prefs.getString(NVS_KEY_PAIR_CODE, "");
+    cfg.pairingExpiresAt = _prefs.getUInt(NVS_KEY_PAIR_EXP, 0);
 
     Serial.printf("[Config] SSID:%s  Server:%s  refresh:%lus  name:'%s'  type:'%s'  prov:%s\n",
                   cfg.wifiSsid.c_str(),
@@ -66,4 +68,34 @@ String ConfigManager::generateProvisionCode() {
              (uint16_t)(lower >> 16),
              (uint16_t)(lower & 0xFFFF));
     return String(buf);
+}
+
+String ConfigManager::generatePairingCode() {
+    char buf[PAIRING_CODE_LEN + 1];
+    for (uint8_t i = 0; i < PAIRING_CODE_LEN; i++) {
+        buf[i] = '0' + (esp_random() % 10);
+    }
+    buf[PAIRING_CODE_LEN] = '\0';
+    return String(buf);
+}
+
+void ConfigManager::startPairing(ClientConfig& cfg) {
+    cfg.pairingCode      = generatePairingCode();
+    cfg.pairingExpiresAt = (uint32_t)(time(nullptr) + (PAIRING_TTL_MIN * 60));
+    if (cfg.pairingExpiresAt < 60) {
+        cfg.pairingExpiresAt = (uint32_t)(millis() / 1000) + (PAIRING_TTL_MIN * 60);
+    }
+    _prefs.putString(NVS_KEY_PAIR_CODE, cfg.pairingCode);
+    _prefs.putUInt(NVS_KEY_PAIR_EXP, cfg.pairingExpiresAt);
+    Serial.printf("[Config] Pairing code: %s (expira %lu)\n",
+                  cfg.pairingCode.c_str(), (unsigned long)cfg.pairingExpiresAt);
+}
+
+bool ConfigManager::isPairingCodeValid(const ClientConfig& cfg) {
+    if (cfg.pairingCode.isEmpty() || cfg.pairingExpiresAt == 0) {
+        return false;
+    }
+    uint32_t now = (uint32_t)time(nullptr);
+    if (now < 60) now = (uint32_t)(millis() / 1000);
+    return now < cfg.pairingExpiresAt;
 }

@@ -177,6 +177,13 @@ export interface MapAnimal {
   last_seen: string | null
   device_type: string
   gps_fresh?: number | null
+  a0x?: number | null
+  a0y?: number | null
+  a0z?: number | null
+  a1x?: number | null
+  a1y?: number | null
+  a1z?: number | null
+  movement?: 'moving' | 'still' | 'unknown'
 }
 
 export interface TemperatureHistoryPoint {
@@ -197,6 +204,21 @@ export interface BatteryHistoryPoint {
 export interface BatteryHistoryResponse {
   dev_addr: string
   points: BatteryHistoryPoint[]
+}
+
+export interface AccelHistoryPoint {
+  ts: string
+  a0x?: number
+  a0y?: number
+  a0z?: number
+  a1x?: number
+  a1y?: number
+  a1z?: number
+}
+
+export interface AccelHistoryResponse {
+  dev_addr: string
+  points: AccelHistoryPoint[]
 }
 
 export interface ConsumptionCycle {
@@ -332,6 +354,16 @@ export interface LoraPendingGateway {
   is_paired: number
 }
 
+export interface LoraPendingDevice {
+  dev_addr: string
+  name: string | null
+  device_type: string | null
+  pairing_code: string
+  pairing_expires_at: string | null
+  battery_pct: number | null
+  last_seen: string | null
+}
+
 export interface LoraDevice {
   id: number
   dev_addr: string
@@ -349,6 +381,12 @@ export interface LoraDevice {
   temperature: number | null
   humidity: number | null
   gps_fresh: number | null
+  a0x: number | null
+  a0y: number | null
+  a0z: number | null
+  a1x: number | null
+  a1y: number | null
+  a1z: number | null
   last_seen: string | null
   updated_at: string | null
   is_active: number

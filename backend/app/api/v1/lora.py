@@ -577,6 +577,38 @@ async def get_device_battery_history(
         return {"dev_addr": dev_addr, "points": []}
 
 
+@router.get("/devices/{dev_addr}/accel-history")
+async def get_device_accel_history(
+    dev_addr: str,
+    limit: int = Query(72, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        conn = _get_db()
+        rows = conn.execute(
+            """
+            SELECT created_at, a0x, a0y, a0z, a1x, a1y, a1z
+            FROM packets
+            WHERE dev_addr = ?
+              AND (a0x IS NOT NULL OR a1x IS NOT NULL)
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (dev_addr, limit),
+        ).fetchall()
+        conn.close()
+        points = []
+        for row in reversed(rows):
+            p = {"ts": row["created_at"]}
+            for k in ("a0x", "a0y", "a0z", "a1x", "a1y", "a1z"):
+                if row[k] is not None:
+                    p[k] = round(row[k], 3)
+            points.append(p)
+        return {"dev_addr": dev_addr, "points": points}
+    except Exception:
+        return {"dev_addr": dev_addr, "points": []}
+
+
 I_ACTIVE_MA = 80.0
 I_SLEEP_MA = 0.15
 BATTERY_CAPACITY_MAH = 3000.0

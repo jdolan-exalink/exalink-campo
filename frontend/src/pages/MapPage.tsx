@@ -12,6 +12,20 @@ const EMPTY: MapData = { animals: [], gateways: [], paddocks: { type: 'FeatureCo
 const DEFAULT_FIELD_COLOR = '#3b82f6'
 const DEFAULT_PADDOCK_COLOR = '#22c55e'
 
+const accelMag = (x: number | null | undefined, y: number | null | undefined, z: number | null | undefined): number | null => {
+  if (x == null || y == null || z == null) return null
+  return Math.sqrt(x * x + y * y + z * z)
+}
+
+const classifyMovement = (a0x: number | null | undefined, a0y: number | null | undefined, a0z: number | null | undefined,
+                           a1x: number | null | undefined, a1y: number | null | undefined, a1z: number | null | undefined): 'moving' | 'still' | 'unknown' => {
+  const m0 = accelMag(a0x, a0y, a0z)
+  const m1 = accelMag(a1x, a1y, a1z)
+  const mag = m0 ?? m1
+  if (mag == null) return 'unknown'
+  return (mag > 1.3 || mag < 0.7) ? 'moving' : 'still'
+}
+
 const toMapAnimal = (device: LoraDevice, fieldLat?: number | null, fieldLon?: number | null): MapAnimal | null => {
   const lat = device.lat != null ? Number(device.lat) : (fieldLat ?? null)
   const lon = device.lon != null ? Number(device.lon) : (fieldLon ?? null)
@@ -36,6 +50,9 @@ const toMapAnimal = (device: LoraDevice, fieldLat?: number | null, fieldLon?: nu
     last_seen: device.last_seen,
     device_type: device.device_type || 'sensor',
     gps_fresh: device.gps_fresh,
+    a0x: device.a0x, a0y: device.a0y, a0z: device.a0z,
+    a1x: device.a1x, a1y: device.a1y, a1z: device.a1z,
+    movement: classifyMovement(device.a0x, device.a0y, device.a0z, device.a1x, device.a1y, device.a1z),
   }
 }
 

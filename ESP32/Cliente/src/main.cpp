@@ -8,6 +8,8 @@
 #include "lora_client.h"
 #include "display_manager.h"
 #include "gps_manager.h"
+#include "mpu6050_sensor.h"
+#include "mp3_player.h"
 
 // ─── RTC persistent state (survives deep sleep) ────────────────────────────────
 struct RTCData {
@@ -64,15 +66,21 @@ static void enterPairingMode() {
     display.turnOn();
     _wakeAt = 0;   // no apagar pantalla mientras está en pairing
 
-    String code = ConfigManager::generateProvisionCode();
-    String uid  = ConfigManager::generateDeviceUid();
+    // Generar código random si no hay uno válido
+    if (cfg.pairingCode.isEmpty() || !cfgMgr.isPairingCodeValid(cfg)) {
+        cfgMgr.startPairing(cfg);
+    }
+
+    String uid = ConfigManager::generateDeviceUid();
     display.showTracker(
         "** MODO PAIRING **",
-        "Codigo: " + code,
+        "Codigo: " + cfg.pairingCode,
         uid.substring(0, 12),
         0, 0, 0, false, Serial.isPlugged()
     );
-    Serial.printf("[Pairing] Codigo: %s  UID: %s\n", code.c_str(), uid.c_str());
+    Serial.printf("[Pairing] Codigo: %s  UID: %s  expira: %lu\n",
+                  cfg.pairingCode.c_str(), uid.c_str(),
+                  (unsigned long)cfg.pairingExpiresAt);
 }
 static bool            _tempSensorInit = false;
 static bool            _tempSensorSeen = false;
@@ -377,6 +385,8 @@ static void doTx() {
     }
     uint8_t bat = readBattery();
     ClimateReading climate = readClimate();
+    MpuReading mpu0 = readMpu6050(0);
+    MpuReading mpu1 = readMpu6050(1);
 
     // Ahorro extremo: si bateria <= 10% → TX cada 1h
     if (bat <= LOW_BAT_THRESHOLD && _rtc.txIntervalMs != LOW_BAT_INTERVAL_MS) {
@@ -393,8 +403,13 @@ static void doTx() {
     checkDayReset(fix);
     rememberLastGps(fix);
 
+    // Enviar código de pairing si no está provisionado
+    String pairingCode = "";
+    if (!cfg.isProvisioned && !cfg.pairingCode.isEmpty() && cfgMgr.isPairingCodeValid(cfg)) {
+        pairingCode = cfg.pairingCode;
+    }
     lora.send(txFix, gps.hasModule(), bat, climate.temperatureC, climate.humidityPct, gpsFresh,
-              checkCharging(), _rtc.bootCount, millis());
+              checkCharging(), _rtc.bootCount, millis(), mpu0, mpu1, pairingCode);
     _rtc.fcnt = lora.getTxCount();
     _rtc.dailyTxCount++;
 
@@ -533,6 +548,7 @@ void setup() {
     // GPS UART
     gps.begin();
     initTemperatureSensor();
+    initMpu6050();
 
     // LoRa
     if (!lora.begin(LORA_FREQ_DEFAULT)) {
@@ -571,6 +587,11 @@ void loop() {
             // Refresca la pantalla de pairing en cada pulsación
             enterPairingMode();
             delay(300);
+        }
+        // Auto-regenerar código cuando está por expirar (< 1 min)
+        if (!cfgMgr.isPairingCodeValid(cfg)) {
+            cfgMgr.startPairing(cfg);
+            enterPairingMode();
         }
         // Mantener pantalla encendida mientras está en pairing
         if (!display.isOn()) display.turnOn();
