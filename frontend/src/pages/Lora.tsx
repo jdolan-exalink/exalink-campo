@@ -50,6 +50,8 @@ export default function Lora() {
     refetchInterval: 15_000,
   })
 
+  const [addGwOpen, setAddGwOpen] = useState(false)
+
   const { data: devicesData, isLoading: devLoading } = useQuery<{ devices: LoraDevice[] }>({
     queryKey: ['lora-devices'],
     queryFn: () => api.get('/lora/devices').then(r => r.data),
@@ -119,12 +121,6 @@ export default function Lora() {
     onError: () => toast.error('Error al guardar'),
   })
 
-  const createGatewayMutation = useMutation({
-    mutationFn: (payload: Partial<LoraGateway>) => api.post('/lora/gateways', payload),
-    onSuccess: () => { toast.success('Gateway registrado'); queryClient.invalidateQueries({ queryKey: ['lora-gateways'] }) },
-    onError: () => toast.error('Error al registrar gateway'),
-  })
-
   const pairGatewayMutation = useMutation({
     mutationFn: (payload: { gateway_id: string; pairing_code: string; name: string }) =>
       api.post('/lora/gateways/pair', payload),
@@ -132,6 +128,7 @@ export default function Lora() {
       const data = res?.data
       if (data?.ok) {
         toast.success(`Gateway "${data.name}" registrado`)
+        setAddGwOpen(false)
       } else {
         toast.error(data?.msg || 'Error al registrar gateway')
       }
@@ -262,12 +259,12 @@ export default function Lora() {
             pending={pending?.gateways ?? []}
             loading={gwLoading}
             pendingLoading={pendingLoading}
-            onCreate={(d) => createGatewayMutation.mutate(d)}
             onPair={(d) => pairGatewayMutation.mutate(d)}
             onDelete={(id, name) => setConfirmAction({ title: 'Eliminar gateway', msg: `Eliminar "${name || id}"? Se perdera su registro y nombre asignado.`, onOk: () => deleteGatewayMutation.mutate(id) })}
             onUpdate={(gw) => updateGatewayMutation.mutate(gw)}
-            creating={createGatewayMutation.isPending}
             pairing={pairGatewayMutation.isPending}
+            addOpen={addGwOpen}
+            setAddOpen={setAddGwOpen}
           />
         )}
 
@@ -434,23 +431,22 @@ function ReaderTab({ packets, total, loading, limit, setLimit }: {
 
 // ── Gateways Tab ──────────────────────────────────────────────────
 
-function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onPair, onDelete, onUpdate, creating, pairing }: {
+function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDelete, onUpdate, pairing, addOpen, setAddOpen }: {
   gateways: LoraGateway[]; pending: LoraPendingGateway[]; loading: boolean; pendingLoading: boolean;
-  onCreate: (d: Partial<LoraGateway>) => void;
   onPair: (d: { gateway_id: string; pairing_code: string; name: string }) => void;
   onDelete: (id: string, name?: string | null) => void; onUpdate: (d: { gateway_id: string; name?: string; location?: string; notes?: string }) => void;
-  creating: boolean; pairing: boolean
+  pairing: boolean;
+  addOpen: boolean; setAddOpen: (v: boolean) => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editLoc, setEditLoc] = useState('')
   const [editNotes, setEditNotes] = useState('')
-  const [pairOpen, setPairOpen] = useState(false)
-  const [pairGwId, setPairGwId] = useState('')
-  const [pairName, setPairName] = useState('')
-  const [pairCode, setPairCode] = useState('')
-  const formRef = useRef<HTMLFormElement>(null)
-  const pairFormRef = useRef<HTMLFormElement>(null)
+
+  // Estado del modal — se reinicia cada vez que se abre
+  const [addGwId, setAddGwId] = useState('')
+  const [addName, setAddName] = useState('')
+  const [addCode, setAddCode] = useState('')
 
   const startEdit = (gw: LoraGateway) => {
     setEditingId(gw.gateway_id)
@@ -465,24 +461,30 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onP
   }
 
   const openPairFor = (gw: LoraPendingGateway) => {
-    setPairGwId(gw.gateway_id)
-    setPairName('')
-    setPairCode('')
-    setPairOpen(true)
+    setAddGwId(gw.gateway_id)
+    setAddName('')
+    setAddCode('')
+    setAddOpen(true)
   }
 
-  const openPairManual = () => {
-    setPairGwId('')
-    setPairName('')
-    setPairCode('')
-    setPairOpen(true)
+  const openAdd = () => {
+    setAddGwId('')
+    setAddName('')
+    setAddCode('')
+    setAddOpen(true)
   }
 
-  const submitPair = (e: React.FormEvent) => {
+  const closeAdd = () => {
+    setAddOpen(false)
+    setAddGwId('')
+    setAddName('')
+    setAddCode('')
+  }
+
+  const submitAdd = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!pairGwId.trim() || !pairCode.trim() || !pairName.trim()) return
-    onPair({ gateway_id: pairGwId.trim(), pairing_code: pairCode.trim(), name: pairName.trim() })
-    setPairOpen(false)
+    if (!addGwId.trim() || !addCode.trim() || !addName.trim()) return
+    onPair({ gateway_id: addGwId.trim(), pairing_code: addCode.trim(), name: addName.trim() })
   }
 
   return (
@@ -495,18 +497,11 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onP
               <KeyRound size={16} className="text-warning" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div>
-                  <p className="text-sm font-semibold text-white">Gateways pendientes de registro</p>
-                  <p className="text-xs text-slate-400">
-                    {pending.length} gateway{pending.length !== 1 ? 's' : ''} con codigo de pairing activo.
-                    Ingresa el codigo que muestra el dispositivo fisico para registrarlo.
-                  </p>
-                </div>
-                <button onClick={openPairManual} className="btn-primary text-xs flex items-center gap-1.5 shrink-0">
-                  <Plus size={13} />Registrar manualmente
-                </button>
-              </div>
+              <p className="text-sm font-semibold text-white mb-1">Gateways pendientes de registro</p>
+              <p className="text-xs text-slate-400 mb-3">
+                {pending.length} gateway{pending.length !== 1 ? 's' : ''} con codigo de pairing activo.
+                Hace clic en <strong>Emparejar</strong> y completa el codigo para registrarlo.
+              </p>
               <div className="space-y-2">
                 {pendingLoading ? (
                   <div className="h-10 bg-surface-800 rounded animate-pulse" />
@@ -533,17 +528,19 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onP
         </div>
       )}
 
-      {/* Form de alta manual (solo nombre para gateways ya registrados manualmente sin pairing) */}
-      <form ref={formRef} onSubmit={e => { e.preventDefault(); const f = e.currentTarget; onCreate({ gateway_id: (f.elements.namedItem('gw_id') as HTMLInputElement).value, name: (f.elements.namedItem('gw_name') as HTMLInputElement).value, location: (f.elements.namedItem('gw_loc') as HTMLInputElement).value, notes: (f.elements.namedItem('gw_notes') as HTMLInputElement).value }); f.reset() }}
-        className="card p-4 flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[160px]"><label className="block text-xs text-slate-400 mb-1">Gateway ID *</label><input name="gw_id" required placeholder="GW-001" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" /></div>
-        <div className="flex-1 min-w-[140px]"><label className="block text-xs text-slate-400 mb-1">Nombre</label><input name="gw_name" placeholder="Gateway Norte" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
-        <div className="flex-1 min-w-[140px]"><label className="block text-xs text-slate-400 mb-1">Ubicacion</label><input name="gw_loc" placeholder="Potrero 3" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
-        <div className="flex-1 min-w-[160px]"><label className="block text-xs text-slate-400 mb-1">Notas</label><input name="gw_notes" placeholder="" className="w-full bg-surface-800 border border-surface-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" /></div>
-        <button type="submit" disabled={creating} className="btn-primary flex items-center gap-1.5 text-sm h-10"><Plus size={14} />{creating ? 'Registrando...' : 'Registrar'}</button>
-      </form>
-
       <div className="card overflow-hidden">
+        {/* Header con botón de alta */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700 bg-surface-900/50">
+          <div className="flex items-center gap-2">
+            <Antenna size={14} className="text-brand-400" />
+            <span className="text-sm font-semibold text-white">Gateways registrados</span>
+            <span className="text-xs text-slate-500">({gateways.length})</span>
+          </div>
+          <button onClick={openAdd} className="btn-primary text-sm flex items-center gap-1.5">
+            <Plus size={14} />Agregar nuevo Gateway
+          </button>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-surface-700">
@@ -562,8 +559,11 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onP
               {loading ? Array.from({ length: 3 }).map((_, i) => (<tr key={i} className="border-b border-surface-700">{Array.from({ length: 9 }).map((_, j) => (<td key={j} className="px-2 py-3"><div className="h-4 bg-surface-700 rounded animate-pulse" /></td>))}</tr>))
               : gateways.length === 0 ? (
                 <tr><td colSpan={9} className="px-3 py-12 text-center text-slate-500">
-                  <KeyRound size={24} className="mx-auto mb-2 opacity-50" />
-                  No hay gateways registrados. Esperando que algun gateway se empareje...
+                  <div className="max-w-sm mx-auto">
+                    <KeyRound size={28} className="mx-auto mb-2 opacity-50" />
+                    <p className="text-sm text-slate-400">No hay gateways registrados todavia.</p>
+                    <p className="text-xs text-slate-500 mt-1">Hace clic en <strong>Agregar nuevo Gateway</strong> y completa el codigo de pairing que muestra el dispositivo.</p>
+                  </div>
                 </td></tr>
               ) : gateways.map(gw => {
                 const isEditing = editingId === gw.gateway_id
@@ -638,43 +638,77 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onCreate, onP
         </div>
       </div>
 
-      {/* Modal de emparejamiento */}
-      {pairOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setPairOpen(false)}>
-          <form ref={pairFormRef} onSubmit={submitPair} className="card p-6 max-w-md w-full mx-4 shadow-2xl border border-surface-600" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-9 h-9 rounded-lg bg-brand-600/20 flex items-center justify-center shrink-0">
-                <KeyRound size={16} className="text-brand-400" />
+      {/* Modal único de "Agregar nuevo Gateway" (pairing) */}
+      {addOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeAdd}>
+          <form onSubmit={submitAdd} className="card p-6 max-w-lg w-full shadow-2xl border border-surface-600 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-3 mb-5">
+              <div className="w-10 h-10 rounded-lg bg-brand-600/20 flex items-center justify-center shrink-0">
+                <Antenna size={18} className="text-brand-400" />
               </div>
               <div className="flex-1">
-                <h3 className="text-sm font-semibold text-white">Registrar Gateway (Pairing)</h3>
+                <h3 className="text-base font-semibold text-white">Agregar nuevo Gateway</h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Ingresa el codigo que muestra el gateway fisico en su pantalla o portal web.
+                  Para registrar un gateway necesitas el codigo de pairing de 6 digitos
+                  que muestra el dispositivo fisico en su pantalla o portal web.
                 </p>
               </div>
+              <button type="button" onClick={closeAdd} className="text-slate-400 hover:text-white shrink-0">
+                <X size={18} />
+              </button>
             </div>
-            <div className="space-y-3">
+
+            {/* Pasos */}
+            <div className="bg-surface-900/60 border border-surface-700 rounded-lg p-3 mb-5 text-xs text-slate-300 space-y-1.5">
+              <p className="font-semibold text-slate-200 mb-2">Como obtener el codigo:</p>
+              <p><span className="text-brand-400 font-mono">1.</span> Enciende el gateway. Si nunca fue registrado, mostrara un codigo de 6 digitos en su pantalla.</p>
+              <p><span className="text-brand-400 font-mono">2.</span> Si no aparece, conecta al WiFi <span className="font-mono">Exalink-Gateway-XXXX</span> y abrí <span className="font-mono">http://192.168.4.1</span>.</p>
+              <p><span className="text-brand-400 font-mono">3.</span> El codigo vence en 10 minutos. Si expira, pulsa <em>Regenerar codigo</em>.</p>
+            </div>
+
+            <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Gateway ID</label>
-                <input value={pairGwId} onChange={e => setPairGwId(e.target.value)} required placeholder="ABCDEF1234567890"
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
+                  Gateway ID <span className="text-danger">*</span>
+                </label>
+                <input value={addGwId} onChange={e => setAddGwId(e.target.value)} required
+                  placeholder="ABCD12345678 (16 caracteres hex)"
                   className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-brand-500" />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Lo encontras en la pantalla del gateway, en el portal web, o en la etiqueta del equipo.
+                </p>
               </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Codigo de Pairing (6 digitos)</label>
-                <input value={pairCode} onChange={e => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required placeholder="123456" maxLength={6}
-                  className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-lg text-white font-mono tracking-widest text-center focus:outline-none focus:border-brand-500" />
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
+                  Codigo de Pairing <span className="text-danger">*</span>
+                </label>
+                <input value={addCode} onChange={e => setAddCode(e.target.value.replace(/\D/g, '').slice(0, 6))} required
+                  placeholder="123456" maxLength={6} inputMode="numeric"
+                  className="w-full bg-surface-800 border-2 border-surface-700 rounded-lg px-3 py-3 text-2xl text-white font-mono tracking-[0.4em] text-center focus:outline-none focus:border-brand-500" />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  6 digitos que muestra el gateway en su pantalla. Vence en 10 minutos.
+                </p>
               </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">Nombre para identificar *</label>
-                <input value={pairName} onChange={e => setPairName(e.target.value)} required placeholder="Gateway Norte"
+                <label className="block text-xs font-semibold text-slate-400 uppercase mb-1.5">
+                  Nombre para identificar <span className="text-danger">*</span>
+                </label>
+                <input value={addName} onChange={e => setAddName(e.target.value)} required
+                  placeholder="Gateway Norte - Potrero 3"
                   className="w-full bg-surface-800 border border-surface-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500" />
               </div>
             </div>
-            <div className="flex justify-end gap-2 mt-5">
-              <button type="button" onClick={() => setPairOpen(false)} className="btn-secondary text-xs">Cancelar</button>
-              <button type="submit" disabled={pairing || !pairGwId.trim() || !pairCode.trim() || !pairName.trim()}
-                className="btn-primary text-xs flex items-center gap-1.5">
-                {pairing ? <><RefreshCw size={12} className="animate-spin" />Emparejando...</> : <><KeyRound size={12} />Emparejar</>}
+
+            <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-surface-700">
+              <button type="button" onClick={closeAdd} className="btn-secondary text-sm">Cancelar</button>
+              <button type="submit"
+                disabled={pairing || !addGwId.trim() || !addCode.trim() || !addName.trim()}
+                className="btn-primary text-sm flex items-center gap-1.5">
+                {pairing
+                  ? <><RefreshCw size={13} className="animate-spin" />Registrando...</>
+                  : <><KeyRound size={13} />Registrar Gateway</>}
               </button>
             </div>
           </form>
