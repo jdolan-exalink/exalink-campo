@@ -213,7 +213,7 @@ export default function Lora() {
     <div className="flex flex-col h-full">
       <Header
         title="LoRaWAN"
-        subtitle={`${total} paquetes · ${stats?.unique_gateways ?? 0} gateways · ${stats?.unique_devices ?? 0} dispositivos`}
+        subtitle={`${total} paquetes · ${stats?.gateways_registered ?? 0} gateways · ${stats?.devices_registered ?? 0} clientes`}
         actions={
           <div className="flex items-center gap-2">
             <button onClick={toggleLog} className={cn('btn-secondary text-xs flex items-center gap-1.5', logOpen && 'bg-brand-600/20 text-brand-400 border-brand-600')}>
@@ -226,22 +226,18 @@ export default function Lora() {
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-brand-600/20 flex items-center justify-center"><Database size={16} className="text-brand-400" /></div>
             <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.total_packets ?? 0}</p><p className="text-xs text-slate-400">Paquetes</p></div>
           </div>
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-field/20 flex items-center justify-center"><RadioTower size={16} className="text-field" /></div>
-            <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.unique_gateways ?? 0}</p><p className="text-xs text-slate-400">Gateways activos</p></div>
+            <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.gateways_registered ?? 0}</p><p className="text-xs text-slate-400">Gateways</p></div>
           </div>
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-purple-500/20 flex items-center justify-center"><Satellite size={16} className="text-purple-400" /></div>
-            <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.unique_devices ?? 0}</p><p className="text-xs text-slate-400">Dispositivos</p></div>
-          </div>
-          <div className="card p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center"><Router size={16} className="text-blue-400" /></div>
-            <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.gateways_registered ?? 0}</p><p className="text-xs text-slate-400">GW registrados</p></div>
+            <div><p className="text-xl font-bold text-white tabular-nums">{statsLoading ? '...' : stats?.devices_registered ?? 0}</p><p className="text-xs text-slate-400">Clientes</p></div>
           </div>
           <div className="card p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-warning/20 flex items-center justify-center"><Clock size={16} className="text-warning" /></div>

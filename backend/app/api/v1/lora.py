@@ -464,23 +464,19 @@ async def get_stats():
     try:
         conn = _get_db()
         total = conn.execute("SELECT COUNT(*) FROM packets").fetchone()[0]
-        gateways = conn.execute("SELECT COUNT(DISTINCT gateway_id) FROM packets").fetchone()[0]
-        devices = conn.execute("SELECT COUNT(DISTINCT dev_addr) FROM packets WHERE dev_addr IS NOT NULL").fetchone()[0]
         last = conn.execute("SELECT * FROM packets ORDER BY id DESC LIMIT 1").fetchone()
         gw_registered = conn.execute("SELECT COUNT(*) FROM gateways WHERE COALESCE(is_paired, 0) = 1").fetchone()[0]
-        dev_registered = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+        dev_registered = conn.execute("SELECT COUNT(*) FROM devices WHERE COALESCE(is_paired, 0) = 1").fetchone()[0]
         conn.close()
         return {
             "total_packets": total,
-            "unique_gateways": gateways,
-            "unique_devices": devices,
             "gateways_registered": gw_registered,
             "devices_registered": dev_registered,
             "last_packet": dict(last) if last else None,
         }
     except Exception:
-        return {"total_packets": 0, "unique_gateways": 0, "unique_devices": 0,
-                "gateways_registered": 0, "devices_registered": 0, "last_packet": None}
+        return {"total_packets": 0, "gateways_registered": 0,
+                "devices_registered": 0, "last_packet": None}
 
 
 # ── Gateways ───────────────────────────────────────────────────────

@@ -298,8 +298,6 @@ export interface LoraPacketResponse {
 
 export interface LoraStats {
   total_packets: number
-  unique_gateways: number
-  unique_devices: number
   gateways_registered: number
   devices_registered: number
   last_packet: LoraPacket | null
