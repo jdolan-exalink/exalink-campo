@@ -109,6 +109,15 @@ static void doGatewaySync() {
             Serial.printf("[Provision] Estado actualizado: %s\n",
                           _isProvisioned ? "PROVISIONADO" : "SIN PROVISIONAR");
         }
+        // Guardar estado de pairing si el servidor confirma registro
+        if (res.isPaired && !gwCfg.isPaired) {
+            gwCfg.isPaired = true;
+            gwCfg.pairingCode = "";
+            gwCfg.pairingExpiresAt = 0;
+            cfgMgr.save(gwCfg);
+            _lastDispRefresh = 0;  // forzar refresh inmediato → mostrará pantalla normal
+            Serial.println("[Pairing] GW registrado exitosamente!");
+        }
     }
     if (!gwCfg.isPaired && gwCfg.pairingCode.length() > 0) {
         _lastDispRefresh = 0;

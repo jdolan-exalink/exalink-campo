@@ -523,7 +523,7 @@ def gateway_sync():
         "uptime_s":    "uptime_s",
         "pkts_total":  "pkts_total",
         "wifi_ip":     "wifi_ip",
-        "is_paired":   "is_paired",
+        # is_paired NO se actualiza desde sync — solo el endpoint /pair lo cambia
     }
     if "pairing_code" in data and data["pairing_code"]:
         field_map["pairing_code"]       = "pairing_code"

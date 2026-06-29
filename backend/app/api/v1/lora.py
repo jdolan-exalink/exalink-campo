@@ -428,7 +428,7 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             "wifi_ssid": "wifi_ssid", "wifi_rssi": "wifi_rssi",
             "battery_pct": "battery_pct", "uptime_s": "uptime_s",
             "pkts_total": "pkts_total",
-            "is_paired": "is_paired",
+            # is_paired NO se actualiza desde sync — solo el endpoint /pair lo cambia
         }
         for json_key, col in field_map.items():
             if json_key in payload and payload[json_key] is not None:

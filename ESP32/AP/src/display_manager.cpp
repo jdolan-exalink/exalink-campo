@@ -118,21 +118,32 @@ void DisplayManager::showPairing(const String& gwId, const String& code,
     _tft.setCursor(VIEW_X + 2, VIEW_Y + 30);
     _tft.print("CODE:");
 
-    // Codigo en 2 lineas, TAMANO 2 (16px de alto), ROJO para que destaque
-    _tft.setTextColor(TFT_RED, COL_BG);
+    // Codigo en 2 lineas, TAMANO 2 (16px de alto), espacios entre digitos
+    _tft.setTextColor(TFT_WHITE, COL_BG);
     _tft.setTextSize(2);
-    String part1 = code.length() >= 3 ? code.substring(0, 3) : code;
-    String part2 = code.length() >= 6 ? code.substring(3, 6) : "";
-    _tft.setCursor(VIEW_X + 6, VIEW_Y + 40);
-    _tft.print(part1);
-    _tft.setCursor(VIEW_X + 6, VIEW_Y + 58);
-    _tft.print(part2);
+    String d = code;
+    String p1, p2;
+    if (d.length() >= 6) {
+        // "123456" -> "1 2 3" / "4 5 6"
+        p1 = String(d[0]) + " " + d[1] + " " + d[2];
+        p2 = String(d[3]) + " " + d[4] + " " + d[5];
+    } else if (d.length() == 3) {
+        p1 = String(d[0]) + " " + d[1] + " " + d[2];
+    } else {
+        p1 = d;
+    }
+    _tft.setCursor(VIEW_X + 2, VIEW_Y + 38);
+    _tft.print(p1);
+    if (p2.length() > 0) {
+        _tft.setCursor(VIEW_X + 2, VIEW_Y + 56);
+        _tft.print(p2);
+    }
 
     // Reset estado para no confundir a showStatus
     _l1 = "PAIRING " + String(minsLeft) + "m";
     _l2 = "ID:" + gwId.substring(0, 16);
-    _l3 = "CODE: " + part1;
-    _l4 = "      " + part2;
+    _l3 = "CODE: " + p1;
+    _l4 = "      " + p2;
     _lastUpdate = millis();   // evitar que showStatus sobrescriba
     _clearRightEdge();
 }

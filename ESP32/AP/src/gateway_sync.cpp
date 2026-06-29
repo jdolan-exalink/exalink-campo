@@ -34,7 +34,7 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
                                const String&        gatewayId,
                                const String&        lorawanPass,
                                const GatewayStatus& st) {
-    GatewaySyncResult result = {false, "", false};
+    GatewaySyncResult result = {false, "", false, false};
     if (serverUrl.isEmpty()) return result;
 
     DynamicJsonDocument doc(512);
@@ -92,6 +92,7 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
         if (name && strlen(name) > 0)
             result.name = String(name);
         result.isProvisioned = respDoc["is_provisioned"] | false;
+        result.isPaired      = respDoc["is_paired"] | false;
     }
 
     Serial.printf("[GW-SYNC] OK — name='%s' provisioned=%d\n",

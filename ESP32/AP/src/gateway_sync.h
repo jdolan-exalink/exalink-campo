@@ -20,6 +20,7 @@ struct GatewaySyncResult {
     bool   ok;
     String name;
     bool   isProvisioned;
+    bool   isPaired;
 };
 
 GatewaySyncResult syncGateway(const String&        serverUrl,
