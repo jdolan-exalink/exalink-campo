@@ -29,6 +29,9 @@ static bool wifiOK = false;
 
 // ── Sync periódico ────────────────────────────────────────────
 static uint32_t  _lastSyncMs        = 0;
+static uint32_t  _lastClimateSyncMs = 0;
+static uint32_t  _lastGpsSyncMs     = 0;
+static float     _cachedBatteryPct  = -1.0f;
 static int32_t   _lastSyncLatencyMs = -1;
 static bool      _isProvisioned     = false;
 static uint32_t  _lastDispRefresh   = 0;
@@ -74,18 +77,25 @@ static void showPairingScreen() {
     );
 }
 
-static void doGatewaySync() {
+static void doGatewaySync(bool sendGps = true) {
     if (!wifiMgr.isSTAConnected()) return;
     GatewayStatus st;
-    GpsData gps = gpsMgr.getData();
-    st.gpsValid    = gps.valid;
-    st.lat         = gps.lat;
-    st.lon         = gps.lon;
+    if (sendGps) {
+        GpsData gps = gpsMgr.getData();
+        st.gpsValid    = gps.valid;
+        st.lat         = gps.lat;
+        st.lon         = gps.lon;
+    } else {
+        st.gpsValid    = false;
+        st.lat         = 0;
+        st.lon         = 0;
+    }
     st.wifiSsid    = gwCfg.wifiSsid;
     st.wifiRssi    = WiFi.RSSI();
     st.name        = gwCfg.gatewayName;
     st.batteryPct  = readBatteryPct();
     st.charging    = checkCharging();
+    _cachedBatteryPct = st.batteryPct;
     ClimateReading climate = readClimate();
     st.temperature = climate.temperatureC;
     st.humidity    = climate.humidityPct;
@@ -346,19 +356,39 @@ if (held >= 10000) {
     // ── Force sync pedido desde web portal ────────────────────
     if (portal && portal->shouldForceSync()) {
         portal->clearForceSync();
-        doGatewaySync();
+        doGatewaySync(true);
     }
 
-    // ── Sync periódico — cada 30s si no está paired, según config si sí ──
-    uint32_t syncIntervalMs;
-    if (!gwCfg.isPaired) {
-        syncIntervalMs = 30000;  // 30s en modo pairing para detectar registro rápido
-    } else {
-        syncIntervalMs = (uint32_t)gwCfg.syncIntervalMin * 60UL * 1000UL;
-    }
-    if (wifiMgr.isSTAConnected() &&
-        millis() - _lastSyncMs >= syncIntervalMs) {
-        doGatewaySync();
+    // ── Sync periódico con timers independientes ─────────────
+    // Battery > 50%: GPS cada 10 min, Climate cada 1 min
+    // Battery ≤ 50%: GPS cada 1 h,   Climate cada 10 min
+    // Sin paired:    todo cada 30s para detectar registro rápido
+    if (wifiMgr.isSTAConnected()) {
+        uint32_t now = millis();
+
+        if (!gwCfg.isPaired) {
+            // Modo pairing: sync cada 30s con GPS
+            if (now - _lastSyncMs >= 30000) {
+                doGatewaySync(true);
+                _lastSyncMs = now;
+            }
+        } else {
+            // Usar última batería conocida (no leer en cada loop)
+            bool lowBat = (_cachedBatteryPct >= 0.0f && _cachedBatteryPct <= 50.0f);
+
+            // Intervalos según batería
+            uint32_t climateMs = lowBat ? 600000UL : 60000UL;   // 10 min / 1 min
+            uint32_t gpsMs     = lowBat ? 3600000UL : 600000UL;  // 1 h / 10 min
+
+            bool climateDue = (now - _lastClimateSyncMs >= climateMs);
+            bool gpsDue     = (now - _lastGpsSyncMs >= gpsMs);
+
+            if (climateDue || gpsDue) {
+                doGatewaySync(gpsDue);
+                if (climateDue) _lastClimateSyncMs = now;
+                if (gpsDue)     _lastGpsSyncMs = now;
+            }
+        }
     }
 
     // ── Web server ────────────────────────────────────────────
@@ -394,6 +424,8 @@ if (held >= 10000) {
                               gwCfg.pairingCode.c_str(),
                               (unsigned long)gwCfg.pairingExpiresAt);
                 _lastSyncMs = 0;  // forzar sync inmediato para que el backend reciba el nuevo código
+                _lastClimateSyncMs = 0;
+                _lastGpsSyncMs = 0;
             }
         }
         // Mostrar codigo de pairing si esta disponible
