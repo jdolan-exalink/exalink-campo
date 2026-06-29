@@ -104,6 +104,12 @@
 #define ADMIN_DEFAULT_PASS  "admin123"
 
 // ============================================================
+// AHT21B — I2C sensor temperatura / humedad
+// ============================================================
+#define AHT21B_SDA_PIN   7   // verde
+#define AHT21B_SCL_PIN   6   // azul
+
+// ============================================================
 // Gateway sync
 // ============================================================
 #define GW_SYNC_ENDPOINT             "/api/v1/lora/gateway/sync"

@@ -474,6 +474,7 @@ export default function LiveMap({ data, className = '', highlightDeviceId = null
                   <p>Estado: <span className={gw.online > 0 ? 'text-emerald-600 font-semibold' : 'text-red-500 font-semibold'}>{gw.online > 0 ? 'Online' : 'Offline'}</span></p>
                   <p>Clientes: <span className="font-semibold text-slate-700">{clientCount} dispositivo{clientCount !== 1 ? 's' : ''}</span></p>
                   {gw.battery_pct != null && <p>Batería: <span className="font-semibold" style={{ color: batteryColor(gw.battery_pct) }}>{Math.round(gw.battery_pct)}%</span>{gw.charging ? <span className="text-amber-500 ml-1">⚡</span> : ''}</p>}
+                  {gw.temperature != null && <p>Temp: <span className="font-semibold text-slate-700">{gw.temperature.toFixed(1)}°C</span>{gw.humidity != null ? <span className="text-slate-500 ml-2">Hum: {Math.round(gw.humidity)}%</span> : ''}</p>}
                   {gw.last_seen && <p className="text-[10px] text-slate-400">Ultima: {new Date(gw.last_seen).toLocaleString('es-AR')}</p>}
                 </div>
                 <div className="mt-2 pt-2 border-t border-slate-200">

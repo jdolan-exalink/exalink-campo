@@ -235,6 +235,8 @@ export interface MapGateway {
   online: number
   battery_pct?: number | null
   charging?: number | null
+  temperature?: number | null
+  humidity?: number | null
   last_seen?: string | null
   device_count?: number
 }
@@ -298,6 +300,8 @@ export interface LoraGateway {
   wifi_ip: string | null
   battery_pct: number | null
   charging: number | null
+  temperature: number | null
+  humidity: number | null
   uptime_s: number | null
   pkts_total: number | null
   location: string | null

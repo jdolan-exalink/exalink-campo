@@ -33,6 +33,8 @@ DisplayManager::DisplayManager()
     , _lastUpdate(0)
     , _batPct(-1.0f)
     , _batCharging(false)
+    , _temperature(NAN)
+    , _humidity(NAN)
 {}
 
 // ── Init ────────────────────────────────────────────────────
@@ -177,6 +179,13 @@ void DisplayManager::showPaired(const String& gwId, const String& name) {
 void DisplayManager::setBattery(float pct, bool charging) {
     _batPct = pct;
     _batCharging = charging;
+    _render();
+}
+
+// ── Set climate state ───────────────────────────────────────
+void DisplayManager::setClimate(float temperature, float humidity) {
+    _temperature = temperature;
+    _humidity = humidity;
     _render();
 }
 
@@ -341,5 +350,21 @@ void DisplayManager::_render() {
     }
 
     _drawBattery();
+
+    // Climate line (T/H)
+    char climateBuf[24];
+    if (isnan(_temperature) && isnan(_humidity))
+        snprintf(climateBuf, sizeof(climateBuf), "T/H: N/D");
+    else if (isnan(_humidity))
+        snprintf(climateBuf, sizeof(climateBuf), "T:%.1fC", _temperature);
+    else if (isnan(_temperature))
+        snprintf(climateBuf, sizeof(climateBuf), "H:%.0f%%", _humidity);
+    else
+        snprintf(climateBuf, sizeof(climateBuf), "T:%.1fC H:%.0f%%", _temperature, _humidity);
+    _tft.setTextColor(COL_DIM, COL_BG);
+    _tft.setTextSize(1);
+    _tft.setCursor(VIEW_X + 2, VIEW_Y + 65);
+    _tft.print(climateBuf);
+
     _clearRightEdge();
 }

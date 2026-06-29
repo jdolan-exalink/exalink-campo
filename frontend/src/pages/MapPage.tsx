@@ -150,6 +150,8 @@ export default function MapPage() {
         online: g.online,
         battery_pct: g.battery_pct,
         charging: g.charging,
+        temperature: g.temperature,
+        humidity: g.humidity,
         last_seen: g.last_seen,
         device_count: g.device_count,
       }))

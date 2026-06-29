@@ -81,42 +81,53 @@ float readBatteryPct() {
     return p;
 }
 
-// ── Charging detection by voltage trend ─────────────────────
-// Track last N voltage readings. If trend is rising → charging.
-static float _vHistory[4] = {0};
-static uint8_t _vIdx = 0;
-static bool _vInit = false;
+// ── Charging detection by double-read ──────────────────────
+// Read ADC twice with a short delay. If voltage is rising → charging.
+// The TP4054 pushes current into the battery when USB is connected,
+// causing a measurable voltage rise even over a few seconds.
 
 bool checkCharging() {
     if (_rawFilt <= 0) return false;
+
+    // Activate divider
+    pinMode(VBAT_ADC_CTRL_PIN, OUTPUT);
+    digitalWrite(VBAT_ADC_CTRL_PIN, HIGH);
+    delay(10);
+
+    // First read (discard)
+    analogRead(VBAT_ADC_PIN);
+    delay(50);
+
+    // First measurement
+    int raw1 = analogRead(VBAT_ADC_PIN);
+    float v1 = (raw1 / 4095.0f) * 3.3f * VBAT_DIVIDER;
+
+    // Wait and take second measurement
+    delay(200);
+    int raw2 = analogRead(VBAT_ADC_PIN);
+    float v2 = (raw2 / 4095.0f) * 3.3f * VBAT_DIVIDER;
+
+    // Deactivate divider
+    digitalWrite(VBAT_ADC_CTRL_PIN, LOW);
+
+    float delta = v2 - v1;
+
+    Serial.printf("[CHG] v1=%.3f v2=%.3f delta=+%s%.3f\n", v1, v2, delta >= 0 ? "" : "", delta);
+
+    // Rising voltage → charging (threshold 5mV over 250ms)
+    if (delta > 0.005f) {
+        Serial.println("[CHG] -> CHARGING");
+        return true;
+    }
+
+    // High stable voltage (>= 4.15V) → full or USB powered
     float v = (_rawFilt / 4095.0f) * 3.3f * VBAT_DIVIDER;
-
-    // Store voltage in circular buffer
-    if (!_vInit) {
-        for (uint8_t i = 0; i < 4; i++) _vHistory[i] = v;
-        _vInit = true;
-    }
-    _vHistory[_vIdx] = v;
-    _vIdx = (_vIdx + 1) % 4;
-
-    // Compare current voltage vs oldest reading (4 cycles ago)
-    float vOld = _vHistory[_vIdx];
-    float vNew = v;
-    float delta = vNew - vOld;
-
-    // Rising voltage → charging
-    if (delta > 0.02f) {
-        Serial.printf("[CHG] CHARGING (delta=+%.3f V old=%.2f new=%.2f)\n", delta, vOld, vNew);
-        return true;
-    }
-
-    // Stable at high voltage (>= 4.15V) → fully charged or USB connected
     if (v >= 4.15f) {
-        Serial.printf("[CHG] FULL/USB (v=%.2f)\n", v);
+        Serial.printf("[CHG] -> FULL (v=%.2f)\n", v);
         return true;
     }
 
-    Serial.printf("[CHG] DISCHARGING (delta=%.3f V=%.2f)\n", delta, v);
+    Serial.printf("[CHG] -> NOT CHARGING\n");
     return false;
 }
 
@@ -136,6 +147,8 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
     if (st.gpsValid) { doc["lat"] = st.lat; doc["lon"] = st.lon; }
     doc["battery_pct"] = (st.batteryPct >= 0.0f) ? st.batteryPct : 0.0f;
     doc["charging"]    = st.charging;
+    if (!isnan(st.temperature)) doc["temperature"] = st.temperature;
+    if (!isnan(st.humidity))    doc["humidity"]    = st.humidity;
     if (st.name.length() > 0) doc["name"] = st.name;
 
     // Pairing: solo enviamos el código si existe, es válido y no estamos aún registrados.

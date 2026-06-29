@@ -145,6 +145,8 @@ def _ensure_lora_schema() -> None:
                 wifi_rssi   INTEGER,
                 battery_pct REAL,
                 charging    INTEGER DEFAULT 0,
+                temperature REAL,
+                humidity    REAL,
                 uptime_s    INTEGER,
                 pkts_total  INTEGER,
                 location    TEXT,
@@ -162,6 +164,8 @@ def _ensure_lora_schema() -> None:
             ("pairing_expires_at",   "TIMESTAMP"),
             ("wifi_ip",              "TEXT"),
             ("charging",             "INTEGER DEFAULT 0"),
+            ("temperature",          "REAL"),
+            ("humidity",             "REAL"),
         ]
         for col, decl in migrations:
             if col not in existing:
@@ -429,6 +433,7 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             "name": "name", "lat": "lat", "lon": "lon",
             "wifi_ssid": "wifi_ssid", "wifi_rssi": "wifi_rssi",
             "battery_pct": "battery_pct", "charging": "charging",
+            "temperature": "temperature", "humidity": "humidity",
             "uptime_s": "uptime_s",
             "pkts_total": "pkts_total",
             # is_paired NO se actualiza desde sync — solo el endpoint /pair lo cambia

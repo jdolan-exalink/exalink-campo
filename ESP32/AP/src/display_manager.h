@@ -18,6 +18,7 @@ public:
                      uint32_t expiresEpoch);
     void showPaired(const String& gwId, const String& name);
     void setBattery(float pct, bool charging);
+    void setClimate(float temperature, float humidity);
 
 private:
     TFT_eSPI _tft;
@@ -26,6 +27,8 @@ private:
     uint32_t _lastUpdate;
     float    _batPct;
     bool     _batCharging;
+    float    _temperature;
+    float    _humidity;
 
     static constexpr int16_t VIEW_X = 0;
     static constexpr int16_t VIEW_Y = 24;

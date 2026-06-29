@@ -10,6 +10,7 @@
 #include "lora_server.h"
 #include "gps_manager.h"
 #include "gateway_sync.h"
+#include "climate_sensor.h"
 
 // ─────────────────────────────────────────────────────────────
 // Objetos globales
@@ -85,6 +86,9 @@ static void doGatewaySync() {
     st.name        = gwCfg.gatewayName;
     st.batteryPct  = readBatteryPct();
     st.charging    = checkCharging();
+    ClimateReading climate = readClimate();
+    st.temperature = climate.temperatureC;
+    st.humidity    = climate.humidityPct;
     st.uptimeSec   = millis() / 1000;
     st.pktsTotal   = loraMgr.getPacketCount();
     st.isPaired        = gwCfg.isPaired;
@@ -97,6 +101,7 @@ static void doGatewaySync() {
     _lastSyncLatencyMs = res.ok ? (int32_t)(millis() - t0) : -1;
     if (portal) portal->setServerOk(res.ok, _lastSyncLatencyMs);
     display.setBattery(st.batteryPct, st.charging);
+    display.setClimate(st.temperature, st.humidity);
 
     if (res.ok) {
         if (res.name.length() > 0 && res.name != gwCfg.gatewayName) {

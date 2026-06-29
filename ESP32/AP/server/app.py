@@ -123,6 +123,10 @@ def _init_db():
         conn.execute("ALTER TABLE gateways ADD COLUMN pairing_expires_at TIMESTAMP")
     if "charging" not in existing_gw_columns:
         conn.execute("ALTER TABLE gateways ADD COLUMN charging INTEGER DEFAULT 0")
+    if "temperature" not in existing_gw_columns:
+        conn.execute("ALTER TABLE gateways ADD COLUMN temperature REAL")
+    if "humidity" not in existing_gw_columns:
+        conn.execute("ALTER TABLE gateways ADD COLUMN humidity REAL")
     existing_dev2_columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)").fetchall()}
     if "wifi_ip" not in existing_dev2_columns:
         conn.execute("ALTER TABLE devices ADD COLUMN wifi_ip TEXT")
@@ -523,6 +527,8 @@ def gateway_sync():
         "wifi_rssi":   "wifi_rssi",
         "battery_pct": "battery_pct",
         "charging":    "charging",
+        "temperature": "temperature",
+        "humidity":    "humidity",
         "uptime_s":    "uptime_s",
         "pkts_total":  "pkts_total",
         "wifi_ip":     "wifi_ip",

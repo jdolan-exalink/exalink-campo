@@ -9,6 +9,8 @@ struct GatewayStatus {
     String   wifiSsid;
     float    batteryPct;
     bool     charging;
+    float    temperature;
+    float    humidity;
     uint32_t uptimeSec;
     uint32_t pktsTotal;
     String   name;
