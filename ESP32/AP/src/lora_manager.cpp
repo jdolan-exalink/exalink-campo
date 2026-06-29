@@ -102,6 +102,20 @@ LoRaPacket LoRaManager::getPacket() {
 uint32_t LoRaManager::getPacketCount() const { return _pktCount; }
 float    LoRaManager::getFreq()        const { return _freq; }
 
+bool LoRaManager::send(const uint8_t* data, size_t len) {
+    _rxFlag = false;
+    _radio.standby();
+    int state = _radio.transmit((uint8_t*)data, len);
+    if (state == RADIOLIB_ERR_NONE) {
+        Serial.printf("[LoRa] TX OK (%d bytes)\n", (int)len);
+    } else {
+        Serial.printf("[LoRa] TX ERROR: %d\n", state);
+    }
+    _rxFlag = false;
+    _radio.startReceive();
+    return state == RADIOLIB_ERR_NONE;
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 String LoRaManager::_toHex(const String& data) {

@@ -687,6 +687,14 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
         row = conn.execute(
             "SELECT name, is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
         ).fetchone()
+
+        # Dispositivos paired que el GW debe provisionar via LoRa downlink
+        provision_devices = [
+            r["dev_addr"] for r in conn.execute(
+                "SELECT dev_addr FROM devices WHERE COALESCE(is_paired, 0) = 1"
+            ).fetchall()
+        ]
+
         conn.close()
 
         # Check provisioning status in PostgreSQL (non-critical — si falla, devolvemos False)
@@ -705,6 +713,7 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             "name": row["name"] if row else None,
             "is_paired": bool(row["is_paired"]) if row else False,
             "is_provisioned": is_provisioned,
+            "provision_devices": provision_devices,
         }
     except Exception as e:
         print(f"[LoraSync] ERROR sync_gateway: {e}")

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <vector>
 
 struct GatewayStatus {
     double   lat;
@@ -24,6 +25,7 @@ struct GatewaySyncResult {
     String name;
     bool   isProvisioned;
     bool   isPaired;
+    std::vector<String> provisionDevices;
 };
 
 GatewaySyncResult syncGateway(const String&        serverUrl,

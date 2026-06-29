@@ -191,7 +191,7 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
 
     result.ok = true;
 
-    DynamicJsonDocument respDoc(256);
+    DynamicJsonDocument respDoc(1024);
     if (!deserializeJson(respDoc, resp)) {
         // Si el backend dice que no fue OK, registrar el error
         bool serverOk = respDoc["ok"] | true;
@@ -207,6 +207,17 @@ GatewaySyncResult syncGateway(const String&        serverUrl,
             result.name = String(name);
         result.isProvisioned = respDoc["is_provisioned"] | false;
         result.isPaired      = respDoc["is_paired"] | false;
+
+        // Lista de dispositivos que el GW debe provisionar via LoRa downlink
+        JsonArray devArr = respDoc["provision_devices"].as<JsonArray>();
+        if (!devArr.isNull()) {
+            for (JsonVariant v : devArr) {
+                const char* d = v.as<const char*>();
+                if (d) result.provisionDevices.push_back(String(d));
+            }
+            Serial.printf("[GW-SYNC] %d dispositivo(s) para provisionar\n",
+                          (int)result.provisionDevices.size());
+        }
     } else {
         Serial.printf("[GW-SYNC] WARN: No se pudo parsear respuesta: %s\n", resp.substring(0, 100).c_str());
     }

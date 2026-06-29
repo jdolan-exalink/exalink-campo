@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <time.h>
+#include <ArduinoJson.h>
 #include "config.h"
 #include "config_manager.h"
 #include "display_manager.h"
@@ -35,6 +36,7 @@ static float     _cachedBatteryPct  = -1.0f;
 static int32_t   _lastSyncLatencyMs = -1;
 static bool      _isProvisioned     = false;
 static uint32_t  _lastDispRefresh   = 0;
+static std::vector<String> _provisionDevices;  // dev_addrs que el GW debe provisionar via LoRa
 
 // ── Contadores / reset diario via NTP ─────────────────────────
 static int32_t   _todayDayNum       = -1;   // día UTC actual (time/86400), -1 = sin NTP
@@ -135,6 +137,8 @@ static void doGatewaySync(bool sendGps = true) {
             _lastDispRefresh = 0;  // forzar refresh inmediato → mostrará pantalla normal
             Serial.println("[Pairing] GW registrado exitosamente!");
         }
+        // Actualizar lista de dispositivos a provisionar
+        _provisionDevices = res.provisionDevices;
     }
     if (!gwCfg.isPaired && gwCfg.pairingCode.length() > 0) {
         _lastDispRefresh = 0;
@@ -472,7 +476,27 @@ if (held >= 10000) {
                                loraMgr.getPacketCount(), preview);
         _lastDispRefresh = millis();   // evitar sobreescritura por el refresh
 
-        // Enviar por HTTP al Flask server local
+        // ── Provisioning downlink: si el cliente envía pc y está paired ──
+        if (pkt.payloadText.startsWith("{") && !_provisionDevices.empty()) {
+            StaticJsonDocument<512> jDoc;
+            if (!deserializeJson(jDoc, pkt.payloadText)) {
+                const char* devAddr = jDoc["d"];
+                const char* pc      = jDoc["pc"];
+                if (devAddr && pc) {
+                    String devStr(devAddr);
+                    for (const String& d : _provisionDevices) {
+                        if (d == devStr) {
+                            String prov = "{\"prov\":1,\"d\":\"" + devStr + "\"}";
+                            Serial.printf("[Prov] TX downlink a %s\n", devStr.c_str());
+                            loraMgr.send((const uint8_t*)prov.c_str(), prov.length());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Enviar por HTTP si hay WiFi
         if (wifiMgr.isSTAConnected()) {
             bool ok = httpPostLoRaPacket(
                 gwCfg.serverUrl,

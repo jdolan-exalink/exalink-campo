@@ -142,3 +142,34 @@ String LoRaClient::getDevAddrHex() const {
     snprintf(buf, sizeof(buf), "%08X", _devAddr);
     return String(buf);
 }
+
+bool LoRaClient::checkProvisioning(uint32_t timeoutMs) {
+    String myAddr = "raw-" + getDevAddrHex();
+
+    _radio.startReceive();
+
+    uint32_t start = millis();
+    while (millis() - start < timeoutMs) {
+        if (digitalRead(LORA_DIO1) == HIGH) {
+            String raw;
+            int state = _radio.readData(raw);
+            if (state == RADIOLIB_ERR_NONE && raw.length() > 0) {
+                Serial.printf("[LoRa] RX downlink: %s\n", raw.c_str());
+                StaticJsonDocument<256> doc;
+                if (!deserializeJson(doc, raw)) {
+                    if (doc["prov"] == 1) {
+                        const char* d = doc["d"];
+                        if (d && String(d) == myAddr) {
+                            Serial.println("[LoRa] Prov RX OK — dispositivo provisionado!");
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        delay(10);
+    }
+
+    Serial.println("[LoRa] RX window timeout");
+    return false;
+}

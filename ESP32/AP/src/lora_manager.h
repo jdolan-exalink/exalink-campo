@@ -25,6 +25,7 @@ public:
     bool     begin(float freq);
     bool     available();
     LoRaPacket getPacket();
+    bool     send(const uint8_t* data, size_t len);
     uint32_t getPacketCount() const;
     float    getFreq()        const;
 

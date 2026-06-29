@@ -19,6 +19,7 @@ public:
     void     setFcnt(uint32_t n)      { _fcnt = n; }
     String   getLastFrameHex()  const { return _lastFrameHex; }
     String   getDevAddrHex()    const;
+    bool     checkProvisioning(uint32_t timeoutMs = 2000);
 
 private:
     SPIClass _spi;

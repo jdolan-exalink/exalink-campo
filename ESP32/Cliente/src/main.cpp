@@ -413,6 +413,18 @@ static void doTx() {
     _rtc.fcnt = lora.getTxCount();
     _rtc.dailyTxCount++;
 
+    // Si enviamos pairing code, abrir ventana RX esperando provisioning
+    if (pairingCode.length() > 0) {
+        if (lora.checkProvisioning(2000)) {
+            cfg.isProvisioned = true;
+            cfgMgr.saveProvisionState(true);
+            Serial.println("[Prov] Dispositivo provisionado! Reiniciando...");
+            display.showTracker("PROVISIONADO!", "Registrado OK", "", bat, 0, 0, false, Serial.isPlugged());
+            delay(2000);
+            ESP.restart();
+        }
+    }
+
     Serial.printf("[Main] TX #%lu (hoy:%lu) GPS:%s bat:%d%% temp:%s deepBoots:%lu\n",
                   (unsigned long)_rtc.fcnt,
                   (unsigned long)_rtc.dailyTxCount,
