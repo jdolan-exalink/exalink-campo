@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from datetime import datetime, timezone
 import os
 import sqlite3
@@ -11,9 +12,11 @@ from app.core.database import get_db
 from app.models.establishment import Establishment
 from app.models.paddock import Paddock
 from app.models.alert import Alert, AlertType, AlertSeverity, AlertStatus
-from fastapi import APIRouter, Query, Body, Depends
+from fastapi import APIRouter, Query, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 from app.core.config import settings
+from app.core.deps import get_current_active_user, require_admin
+from app.models.user import User
 
 router = APIRouter(prefix="/lora", tags=["lora"])
 
@@ -215,6 +218,34 @@ def _ensure_lora_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_packets_created_at ON packets(created_at);
             CREATE INDEX IF NOT EXISTS idx_packets_gateway    ON packets(gateway_id);
             CREATE INDEX IF NOT EXISTS idx_packets_dev_addr   ON packets(dev_addr);
+
+            CREATE TABLE IF NOT EXISTS pairing_attempts (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind            TEXT NOT NULL,           -- 'gateway' | 'device'
+                target_id       TEXT NOT NULL,           -- gateway_id o dev_addr
+                code_attempted  TEXT,                    -- el código que mandó el usuario (hash-able para auditoría)
+                result          TEXT NOT NULL,           -- 'ok' | 'not_found' | 'expired' | 'already_paired' | 'mismatch' | 'throttled' | 'error'
+                reason          TEXT,                    -- mensaje legible
+                ip              TEXT,
+                user_agent      TEXT,
+                user_id         TEXT,                    -- del JWT (si vino autenticado)
+                created_at      TIMESTAMP DEFAULT (datetime('now', 'localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_pairing_attempts_target ON pairing_attempts(target_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_pairing_attempts_result ON pairing_attempts(result, created_at);
+
+            -- Snapshots previos a wipes destructivos, para poder restaurar.
+            -- Se guardan como JSON (lista de filas) para que el schema pueda evolucionar.
+            CREATE TABLE IF NOT EXISTS clear_snapshots (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind        TEXT NOT NULL,           -- 'gateways' | 'devices' | 'all'
+                payload     TEXT NOT NULL,           -- JSON con las filas completas
+                reason      TEXT,                    -- ej: 'admin /lora/reset', 'auto pre-clear'
+                user_id     TEXT,
+                created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime')),
+                restored_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_clear_snapshots_created ON clear_snapshots(created_at);
         """)
 
         # Migraciones defensivas para tablas pre-existentes
@@ -223,6 +254,7 @@ def _ensure_lora_schema() -> None:
                 ("is_paired",          "INTEGER DEFAULT 0"),
                 ("pairing_code",       "TEXT"),
                 ("pairing_expires_at", "TIMESTAMP"),
+                ("last_paired_code",   "TEXT"),  # guarda el último código usado al pair, para reconocer reintentos
                 ("wifi_ip",            "TEXT"),
                 ("charging",           "INTEGER DEFAULT 0"),
                 ("temperature",        "REAL"),
@@ -243,6 +275,7 @@ def _ensure_lora_schema() -> None:
                 ("is_paired",           "INTEGER DEFAULT 0"),
                 ("pairing_code",        "TEXT"),
                 ("pairing_expires_at",  "TIMESTAMP"),
+                ("last_paired_code",    "TEXT"),
                 ("a0x", "REAL"), ("a0y", "REAL"), ("a0z", "REAL"),
                 ("a1x", "REAL"), ("a1y", "REAL"), ("a1z", "REAL"),
             ]),
@@ -261,6 +294,102 @@ def _ensure_lora_schema() -> None:
 
 
 _ensure_lora_schema()
+
+
+# ── Pairing helpers (audit log + rate-limit) ────────────────────
+
+# ── Pairing helpers (audit log + rate-limit) ────────────────────
+
+async def _optional_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """Devuelve el User si el request trae JWT válido; None si no hay token.
+
+    Se usa en endpoints de pairing para que el audit log pueda registrar
+    quién intentó (si estaba autenticado), sin obligar a estar logueado.
+    """
+    from app.core.security import decode_token
+    auth = request.headers.get("authorization") or ""
+    if not auth.lower().startswith("bearer "):
+        return None
+    token = auth.split(" ", 1)[1].strip()
+    payload = decode_token(token)
+    if not payload or payload.get("type") != "access":
+        return None
+    sub = payload.get("sub")
+    if not sub:
+        return None
+    try:
+        uid = uuid.UUID(sub)
+    except (ValueError, TypeError):
+        return None
+    user = await db.get(User, uid)
+    if user and user.is_active:
+        return user
+    return None
+
+
+def _log_pair_attempt(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,             # 'gateway' | 'device'
+    target_id: str,
+    code_attempted: str | None,
+    result: str,           # 'ok' | 'not_found' | 'expired' | 'already_paired' | 'mismatch' | 'throttled' | 'error'
+    reason: str | None = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """Registra un intento de pairing (ok o falla) para auditoría.
+
+    Se hace best-effort: un fallo en la auditoría NO debe tumbar el endpoint
+    de pairing. El caller debe encargarse de commitear la conexión.
+    """
+    try:
+        conn.execute(
+            """
+            INSERT INTO pairing_attempts
+                (kind, target_id, code_attempted, result, reason, ip, user_agent, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (kind, target_id, code_attempted, result, reason, ip, user_agent, user_id),
+        )
+    except Exception as e:
+        print(f"[PAIR-AUDIT] no se pudo registrar intento: {e}")
+
+
+def _pairing_throttled(conn: sqlite3.Connection, *, kind: str, target_id: str, ip: str | None) -> bool:
+    """Devuelve True si se superó el límite de intentos en la ventana."""
+    max_attempts = settings.PAIRING_MAX_ATTEMPTS
+    window_s = settings.PAIRING_RATE_WINDOW_S
+    if max_attempts <= 0 or window_s <= 0:
+        return False
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM pairing_attempts
+            WHERE kind = ? AND target_id = ?
+              AND created_at >= datetime('now', 'localtime', ?)
+              AND result != 'ok'
+            """,
+            (kind, target_id, f"-{int(window_s)} seconds"),
+        ).fetchone()
+        fails = row[0] if row else 0
+        if ip:
+            row_ip = conn.execute(
+                """
+                SELECT COUNT(*) FROM pairing_attempts
+                WHERE ip = ? AND created_at >= datetime('now', 'localtime', ?)
+                  AND result != 'ok'
+                """,
+                (ip, f"-{int(window_s)} seconds"),
+            ).fetchone()
+            fails += row_ip[0] if row_ip else 0
+        return fails >= max_attempts
+    except Exception:
+        return False
 
 
 # ── Ingest (recibe paquetes del GW) ─────────────────────────────
@@ -330,35 +459,67 @@ async def ingest(payload: dict = Body(...)):
         if not dev_addr and payload_hex:
             dev_addr = "raw-" + payload_hex[:8]
 
-        # Store packet
-        conn.execute("""
-            INSERT INTO packets
-              (gateway_id, received_at, rssi, snr, freq_mhz, sf,
-               payload_hex, dev_addr, temperature, humidity, battery, charging,
-               wake_boots, wake_time_ms, mtype_str, fcnt,
-               lat, lon,
-               a0x, a0y, a0z, a1x, a1y, a1z, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-        """, (
-            gw_id,
-            payload.get("received_at", 0),
-            payload.get("rssi"),
-            payload.get("snr"),
-            payload.get("freq_mhz"),
-            payload.get("sf"),
-            payload_hex,
-            dev_addr,
-            temperature,
-            humidity,
-            battery,
-            charging,
-            wake_boots,
-            wake_time_ms,
-            (payload.get("lorawan") or {}).get("mtype_str"),
-            (payload.get("lorawan") or {}).get("fcnt"),
-            lat, lon,
-            a0x, a0y, a0z, a1x, a1y, a1z,
-        ))
+        # Si LORA_REQUIRE_PAIRING está activo, descartamos las lecturas
+        # de devices no pareados (excepto "gw:" que son lecturas del propio
+        # gateway). El device se auto-registra igual para que aparezca en
+        # /devices/pending y el NOC/admin lo pueda emparejar.
+        is_gateway_self_packet = bool(dev_addr) and dev_addr.startswith("gw:")
+        is_first_seen = False
+        device_is_paired = True  # default para no filtrar (gw: o dev_addr vacío)
+
+        if dev_addr and not is_gateway_self_packet:
+            row = conn.execute(
+                "SELECT is_paired FROM devices WHERE dev_addr = ?", (dev_addr,),
+            ).fetchone()
+            if row is None:
+                is_first_seen = True
+                device_is_paired = False
+            else:
+                device_is_paired = bool(row["is_paired"])
+
+        drop_packet = (
+            settings.LORA_REQUIRE_PAIRING
+            and dev_addr
+            and not is_gateway_self_packet
+            and not device_is_paired
+            and not is_first_seen  # la primera lectura se guarda para que haya datos al parear
+        )
+        # Si es first-seen y require_pairing está activo, descartamos el packet
+        # (sólo queremos que aparezca en /devices/pending; los datos reales se
+        # empiezan a guardar recién cuando el device está paired).
+        if is_first_seen and settings.LORA_REQUIRE_PAIRING:
+            drop_packet = True
+
+        if not drop_packet:
+            # Store packet
+            conn.execute("""
+                INSERT INTO packets
+                  (gateway_id, received_at, rssi, snr, freq_mhz, sf,
+                   payload_hex, dev_addr, temperature, humidity, battery, charging,
+                   wake_boots, wake_time_ms, mtype_str, fcnt,
+                   lat, lon,
+                   a0x, a0y, a0z, a1x, a1y, a1z, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            """, (
+                gw_id,
+                payload.get("received_at", 0),
+                payload.get("rssi"),
+                payload.get("snr"),
+                payload.get("freq_mhz"),
+                payload.get("sf"),
+                payload_hex,
+                dev_addr,
+                temperature,
+                humidity,
+                battery,
+                charging,
+                wake_boots,
+                wake_time_ms,
+                (payload.get("lorawan") or {}).get("mtype_str"),
+                (payload.get("lorawan") or {}).get("fcnt"),
+                lat, lon,
+                a0x, a0y, a0z, a1x, a1y, a1z,
+            ))
 
         # Auto-register gateway
         conn.execute(
@@ -404,15 +565,23 @@ async def ingest(payload: dict = Body(...)):
                 is_already_paired = existing_paired and existing_paired["is_paired"]
                 if not is_already_paired:
                     updates.append("pairing_code = ?"); params.append(pairing_code)
-                    updates.append("pairing_expires_at = datetime('now', 'localtime', '+10 minutes')")
+                    updates.append(
+                        f"pairing_expires_at = datetime('now', '+{int(settings.PAIRING_TTL_MIN)} minutes')"
+                    )
             conn.execute(
                 f"UPDATE devices SET {', '.join(updates)} WHERE dev_addr = ?",
                 params + [dev_addr],
             )
 
         conn.commit()
-        print(f"[INGEST] GW={gw_id} Dev={dev_addr} bat={battery}% temp={temperature}")
-        return {"ok": True}
+        status = "stored" if not drop_packet else "dropped-unpaired"
+        print(f"[INGEST] GW={gw_id} Dev={dev_addr} {status} bat={battery}% temp={temperature}")
+        return {
+            "ok": True,
+            "stored": not drop_packet,
+            "reason": None if not drop_packet else "device_not_paired",
+            "dev_addr": dev_addr,
+        }
     except Exception as e:
         print(f"[INGEST] ERROR: {e}")
         return {"ok": False, "msg": str(e)}, 500
@@ -527,7 +696,7 @@ async def get_pending_gateways():
             WHERE COALESCE(g.is_paired, 0) = 0
               AND g.pairing_code IS NOT NULL
               AND g.pairing_expires_at IS NOT NULL
-              AND g.pairing_expires_at > datetime('now', 'localtime')
+              AND g.pairing_expires_at > datetime('now')
             ORDER BY g.pairing_expires_at ASC
         """).fetchall()
         conn.close()
@@ -537,25 +706,144 @@ async def get_pending_gateways():
 
 
 @router.post("/gateways/pair")
-async def pair_gateway(payload: dict = Body(...)):
+async def pair_gateway(
+    payload: dict = Body(...),
+    request: Request = None,  # type: ignore[assignment]
+    current_user: User | None = Depends(_optional_user),
+):
+    """Empareja un gateway LoRa a partir de su código de pairing en pantalla.
+
+    Devuelve códigos de error distintos en `code` para que el front pueda
+    mostrar mensajes específicos:
+      - 'invalid'     código vacío o no encontrado
+      - 'expired'     el código existe pero está fuera de ventana
+      - 'mismatch'    el código existe pero pertenece a otro gateway
+      - 'already_paired' el GW ya está registrado
+      - 'throttled'   demasiados intentos fallidos recientes
+      - 'error'       error inesperado
+
+    Todos los intentos (ok o falla) quedan registrados en `pairing_attempts`.
+    """
     try:
         code = (payload.get("pairing_code") or "").strip()
         name = (payload.get("name") or "").strip()
         hint_gw_id = (payload.get("gateway_id") or "").strip() or None
 
-        if not code:
-            return {"ok": False, "msg": "pairing_code requerido"}
+        ip = None
+        ua = None
+        if request is not None:
+            ip = request.client.host if request.client else None
+            ua = request.headers.get("user-agent")
+        user_id = str(current_user.id) if current_user else None
 
         conn = _get_db()
 
-        # Buscar por código primero (más confiable — el GW regenera códigos)
+        if not code:
+            _log_pair_attempt(
+                conn,
+                kind="gateway", target_id=hint_gw_id or "?",
+                code_attempted=None, result="not_found",
+                reason="pairing_code requerido",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "invalid", "msg": "pairing_code requerido"}
+
+        target_for_log = hint_gw_id or code
+
+        if _pairing_throttled(conn, kind="gateway", target_id=target_for_log, ip=ip):
+            _log_pair_attempt(
+                conn, kind="gateway", target_id=target_for_log,
+                code_attempted=code, result="throttled",
+                reason="rate limit", ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "throttled",
+                    "msg": "Demasiados intentos. Esperá unos minutos y volvé a intentar."}
+
+        # Buscar por código primero (más confiable — el GW regenera códigos).
+# Sólo códigos vigentes: si está expirado, lo manejamos abajo con un mensaje
+# específico ("expired" en vez de "invalid") para que el front lo distinga.
         row = conn.execute(
             "SELECT gateway_id, pairing_code, pairing_expires_at, is_paired, name "
             "FROM gateways WHERE pairing_code = ? AND COALESCE(is_paired, 0) = 0 "
-            "AND pairing_expires_at IS NOT NULL AND pairing_expires_at > datetime('now', 'localtime') "
+            "AND pairing_expires_at IS NOT NULL "
+            "AND pairing_expires_at > datetime('now') "
             "ORDER BY pairing_expires_at DESC LIMIT 1",
             (code,),
         ).fetchone()
+
+        # El código existe pero ya venció → marcamos expired
+        if not row:
+            expired_row = conn.execute(
+                "SELECT gateway_id FROM gateways WHERE pairing_code = ? "
+                "AND COALESCE(is_paired, 0) = 0 "
+                "AND pairing_expires_at IS NOT NULL "
+                "AND pairing_expires_at <= datetime('now') LIMIT 1",
+                (code,),
+            ).fetchone()
+            if expired_row:
+                _log_pair_attempt(
+                    conn, kind="gateway", target_id=expired_row["gateway_id"],
+                    code_attempted=code, result="expired",
+                    reason="código fuera de ventana",
+                    ip=ip, user_agent=ua, user_id=user_id,
+                )
+                conn.commit(); conn.close()
+                return {"ok": False, "code": "expired",
+                        "msg": "El código está caducado. Pedile al gateway que renueve (botón pairing) o usá el endpoint de refresh."}
+            # El código no existe para ningún GW pending → puede que el GW ya esté paired.
+            # Buscamos tanto en pairing_code activo como en last_paired_code histórico
+            # (porque al hacer pair exitoso se borra pairing_code pero queda en last_paired_code).
+            already_paired_row = conn.execute(
+                "SELECT gateway_id FROM gateways WHERE "
+                "(pairing_code = ? OR last_paired_code = ?) "
+                "AND is_paired = 1 LIMIT 1",
+                (code, code),
+            ).fetchone()
+            if already_paired_row:
+                _log_pair_attempt(
+                    conn, kind="gateway", target_id=already_paired_row["gateway_id"],
+                    code_attempted=code, result="already_paired",
+                    reason="código de GW ya registrado",
+                    ip=ip, user_agent=ua, user_id=user_id,
+                )
+                conn.commit(); conn.close()
+                return {"ok": False, "code": "already_paired",
+                        "msg": "Este gateway ya está registrado."}
+            _log_pair_attempt(
+                conn, kind="gateway", target_id=target_for_log,
+                code_attempted=code, result="not_found",
+                reason="código no existe",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit()
+            # Diagnóstico: si hay GWs pending, devolver los códigos
+            # enmascarados (4****2) para que el user detecte typos.
+            pending = [
+                {
+                    "gateway_id": r["gateway_id"],
+                    "hint": (r["pairing_code"][:2] + "****"
+                             + r["pairing_code"][-1:] if r["pairing_code"]
+                             and len(r["pairing_code"]) >= 4 else "?"),
+                    "expires_at": r["pairing_expires_at"],
+                    "last_seen": r["last_seen"],
+                }
+                for r in conn.execute(
+                    "SELECT gateway_id, pairing_code, pairing_expires_at, last_seen "
+                    "FROM gateways WHERE COALESCE(is_paired, 0) = 0 "
+                    "AND pairing_code IS NOT NULL "
+                    "AND pairing_expires_at > datetime('now') "
+                    "ORDER BY pairing_expires_at DESC"
+                ).fetchall()
+            ]
+            conn.close()
+            return {
+                "ok": False,
+                "code": "invalid",
+                "msg": "Código de pairing inválido. Verificá que el gateway esté conectado y mostrando el código.",
+                "pending_gateways": pending,
+            }
 
         # Si no encontró por código pero el usuario dio un gateway_id,
         # verificar si ese GW tiene el código (podría haber regenerado)
@@ -566,16 +854,26 @@ async def pair_gateway(payload: dict = Body(...)):
                 (hint_gw_id,),
             ).fetchone()
             if row and (row["pairing_code"] or "") != code:
-                conn.close()
-                return {"ok": False, "msg": "El codigo no corresponde a este gateway. Verifica el codigo en la pantalla OLED."}
-
-        if not row:
-            conn.close()
-            return {"ok": False, "msg": "Codigo de pairing invalido o expirado. Verifica que el gateway este conectado y el codigo vigente."}
+                _log_pair_attempt(
+                    conn, kind="gateway", target_id=hint_gw_id,
+                    code_attempted=code, result="mismatch",
+                    reason="código no corresponde al gateway",
+                    ip=ip, user_agent=ua, user_id=user_id,
+                )
+                conn.commit(); conn.close()
+                return {"ok": False, "code": "mismatch",
+                        "msg": "El código no corresponde a este gateway. Verifica el código en la pantalla OLED."}
 
         if row["is_paired"]:
-            conn.close()
-            return {"ok": False, "msg": "El gateway ya esta registrado."}
+            _log_pair_attempt(
+                conn, kind="gateway", target_id=row["gateway_id"],
+                code_attempted=code, result="already_paired",
+                reason="gateway ya registrado",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "already_paired",
+                    "msg": "El gateway ya está registrado."}
 
         gw_id = row["gateway_id"]
         final_name = name if name else gw_id   # auto-asignar ID si no hay nombre
@@ -587,17 +885,34 @@ async def pair_gateway(payload: dict = Body(...)):
                    name = ?,
                    pairing_code = NULL,
                    pairing_expires_at = NULL,
+                   last_paired_code = ?,
                    updated_at = CURRENT_TIMESTAMP,
                    last_seen = CURRENT_TIMESTAMP
              WHERE gateway_id = ?
             """,
-            (final_name, gw_id),
+            (final_name, code, gw_id),
+        )
+        _log_pair_attempt(
+            conn, kind="gateway", target_id=gw_id,
+            code_attempted=code, result="ok",
+            reason=f"paired as '{final_name}'",
+            ip=ip, user_agent=ua, user_id=user_id,
         )
         conn.commit()
         conn.close()
-        return {"ok": True, "gateway_id": gw_id, "name": final_name}
+        return {"ok": True, "code": "ok", "gateway_id": gw_id, "name": final_name}
     except Exception as e:
-        return {"ok": False, "msg": f"Error al emparejar: {e}"}
+        try:
+            conn = _get_db()
+            _log_pair_attempt(
+                conn, kind="gateway", target_id="?",
+                code_attempted=(payload or {}).get("pairing_code"),
+                result="error", reason=str(e),
+            )
+            conn.commit(); conn.close()
+        except Exception:
+            pass
+        return {"ok": False, "code": "error", "msg": f"Error al emparejar: {e}"}
 
 
 @router.post("/gateways")
@@ -641,13 +956,55 @@ async def update_gateway(gateway_id: str, payload: dict = Body(...)):
 
 
 @router.delete("/gateways/{gateway_id}")
-async def delete_gateway(gateway_id: str):
+async def delete_gateway(
+    gateway_id: str,
+    request: Request,
+    force: bool = Query(False, description="Borra aunque esté paired y limpia packets asociados"),
+    current_user: User = Depends(require_admin),
+):
+    """Elimina un gateway. Sólo admin.
+
+    Sin `force=true`: falla con `is_paired` si está registrado.
+    Con `force=true`: revierte is_paired, borra los packets asociados y
+    registra la acción en el audit log.
+    """
     try:
         conn = _get_db()
+        row = conn.execute(
+            "SELECT is_paired FROM gateways WHERE gateway_id = ?", (gateway_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Gateway no existe"}
+        if row["is_paired"] and not force:
+            conn.close()
+            return {
+                "ok": False,
+                "code": "is_paired",
+                "msg": ("El gateway está registrado (is_paired=1). Para eliminarlo "
+                        "de todas formas, mandá ?force=true (admin) — eso borra "
+                        "también los packets asociados."),
+            }
+
+        packets_deleted = 0
+        # Siempre limpiamos los packets asociados (así no quedan huérfanos
+        # en queries de /packets que filtren por gateway_id).
+        cur = conn.execute("DELETE FROM packets WHERE gateway_id = ?", (gateway_id,))
+        packets_deleted = cur.rowcount
+        if force:
+            _log_pair_attempt(
+                conn, kind="gateway", target_id=gateway_id,
+                code_attempted=None, result="ok",
+                reason=(f"force-delete by {current_user.email} "
+                        f"(was_paired, packets_deleted={packets_deleted})"),
+                ip=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                user_id=str(current_user.id),
+            )
         conn.execute("DELETE FROM gateways WHERE gateway_id=?", (gateway_id,))
         conn.commit()
         conn.close()
-        return {"ok": True}
+        return {"ok": True, "packets_deleted": packets_deleted}
     except Exception:
         return {"ok": False, "msg": "Error al eliminar gateway"}
 
@@ -680,15 +1037,31 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
 
         # pairing_code y expiry sólo si viene y el GW NO está paired en la DB
         existing_paired = conn.execute(
-            "SELECT is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
+            "SELECT is_paired, pairing_code FROM gateways WHERE gateway_id = ?", (gw_id,)
         ).fetchone()
         is_already_paired = existing_paired and existing_paired["is_paired"]
+
+        # Si el GW trae pairing_code y aún no está paired → guardarlo
         if payload.get("pairing_code") and not is_already_paired:
             updates.append("pairing_code = ?")
             params.append(payload["pairing_code"])
-            if payload.get("pairing_expires_at"):
-                updates.append("pairing_expires_at = datetime(?, 'unixepoch')")
-                params.append(int(payload["pairing_expires_at"]))
+            # El server SIEMPRE estampa la expiración (no confiar en el reloj
+            # del GW, puede estar sin NTP). Si el GW manda su propio expiry,
+            # se ignora para evitar pares con códigos que ya vencieron en server.
+            updates.append(
+                f"pairing_expires_at = datetime('now', '+{int(settings.PAIRING_TTL_MIN)} minutes')"
+            )
+        # Si el GW ya tenía un código pending y la auto-renovación está activa,
+        # extender la ventana para que el usuario tenga tiempo de tipearlo.
+        elif (
+            settings.PAIRING_AUTO_RENEW
+            and not is_already_paired
+            and existing_paired
+            and existing_paired["pairing_code"]
+        ):
+            updates.append(
+                f"pairing_expires_at = datetime('now', '+{int(settings.PAIRING_TTL_MIN)} minutes')"
+            )
 
         conn.execute(f"UPDATE gateways SET {', '.join(updates)} WHERE gateway_id = ?", params + [gw_id])
 
@@ -1078,19 +1451,37 @@ async def get_device_consumption(
 
 @router.get("/devices/pending")
 async def get_pending_devices():
+    """Lista devices pendientes de parear.
+
+    Incluye tanto los que tienen pairing_code vigente como los que fueron
+    auto-registrados por una lectura entrante (típicamente dev_addr='raw-XXXX')
+    pero todavía no trajeron código de pairing. Esos últimos aparecen con
+    `pairing_code=null` y `pairing_state='awaiting_code'`.
+    """
     try:
         conn = _get_db()
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT d.dev_addr, d.name, d.device_type, d.pairing_code,
                    d.pairing_expires_at, d.last_seen, d.battery_pct,
-                   d.temperature, d.created_at, d.is_paired
+                   d.temperature, d.created_at, d.is_paired,
+                   CASE
+                       WHEN d.pairing_code IS NULL THEN 'awaiting_code'
+                       WHEN d.pairing_expires_at IS NULL
+                            OR d.pairing_expires_at <= datetime('now') THEN 'code_expired'
+                       ELSE 'code_active'
+                   END AS pairing_state,
+                   (SELECT COUNT(*) FROM packets p
+                    WHERE p.dev_addr = d.dev_addr
+                      AND p.created_at >= datetime('now','localtime','-1 hour')) AS packets_last_hour,
+                   (SELECT COUNT(*) FROM packets p
+                    WHERE p.dev_addr = d.dev_addr) AS packets_total
             FROM devices d
             WHERE COALESCE(d.is_paired, 0) = 0
-              AND d.pairing_code IS NOT NULL
-              AND d.pairing_expires_at IS NOT NULL
-              AND d.pairing_expires_at > datetime('now', 'localtime')
-            ORDER BY d.pairing_expires_at ASC
-        """).fetchall()
+              AND d.dev_addr NOT LIKE 'gw:%'
+            ORDER BY d.last_seen DESC
+            """,
+        ).fetchall()
         conn.close()
         return {"devices": [dict(r) for r in rows]}
     except Exception:
@@ -1098,15 +1489,54 @@ async def get_pending_devices():
 
 
 @router.post("/devices/pair")
-async def pair_device(payload: dict = Body(...)):
+async def pair_device(
+    payload: dict = Body(...),
+    request: Request = None,  # type: ignore[assignment]
+    current_user: User | None = Depends(_optional_user),
+):
+    """Empareja un dispositivo LoRa seleccionándolo de la lista de pending.
+
+    Devuelve códigos de error distintos:
+      - 'invalid'          sin dev_addr o no encontrado
+      - 'already_paired'   el device ya está registrado
+      - 'throttled'        rate limit excedido
+      - 'error'            error inesperado
+
+    Todos los intentos quedan auditados en `pairing_attempts`.
+    """
     try:
         dev_addr = (payload.get("dev_addr") or "").strip()
         name = (payload.get("name") or "").strip()
 
-        if not dev_addr:
-            return {"ok": False, "msg": "dev_addr requerido"}
+        ip = None
+        ua = None
+        if request is not None:
+            ip = request.client.host if request.client else None
+            ua = request.headers.get("user-agent")
+        user_id = str(current_user.id) if current_user else None
 
         conn = _get_db()
+
+        if not dev_addr:
+            _log_pair_attempt(
+                conn, kind="device", target_id="?",
+                code_attempted=None, result="not_found",
+                reason="dev_addr requerido",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "invalid", "msg": "dev_addr requerido"}
+
+        if _pairing_throttled(conn, kind="device", target_id=dev_addr, ip=ip):
+            _log_pair_attempt(
+                conn, kind="device", target_id=dev_addr,
+                code_attempted=None, result="throttled",
+                reason="rate limit", ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "throttled",
+                    "msg": "Demasiados intentos. Esperá unos minutos."}
+
         row = conn.execute(
             "SELECT dev_addr, pairing_code, pairing_expires_at, is_paired, name "
             "FROM devices WHERE dev_addr = ?",
@@ -1114,12 +1544,26 @@ async def pair_device(payload: dict = Body(...)):
         ).fetchone()
 
         if not row:
-            conn.close()
-            return {"ok": False, "msg": "Dispositivo no encontrado"}
+            _log_pair_attempt(
+                conn, kind="device", target_id=dev_addr,
+                code_attempted=None, result="not_found",
+                reason="device no existe",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "invalid",
+                    "msg": "Dispositivo no encontrado"}
 
         if row["is_paired"]:
-            conn.close()
-            return {"ok": False, "msg": "El dispositivo ya esta registrado"}
+            _log_pair_attempt(
+                conn, kind="device", target_id=dev_addr,
+                code_attempted=None, result="already_paired",
+                reason="device ya registrado",
+                ip=ip, user_agent=ua, user_id=user_id,
+            )
+            conn.commit(); conn.close()
+            return {"ok": False, "code": "already_paired",
+                    "msg": "El dispositivo ya está registrado"}
 
         final_name = name if name else (row["name"] or dev_addr)
 
@@ -1130,17 +1574,33 @@ async def pair_device(payload: dict = Body(...)):
                    name = ?,
                    pairing_code = NULL,
                    pairing_expires_at = NULL,
+                   last_paired_code = COALESCE(pairing_code, last_paired_code),
                    updated_at = CURRENT_TIMESTAMP,
                    last_seen = CURRENT_TIMESTAMP
              WHERE dev_addr = ?
             """,
             (final_name, dev_addr),
         )
+        _log_pair_attempt(
+            conn, kind="device", target_id=dev_addr,
+            code_attempted=None, result="ok",
+            reason=f"paired as '{final_name}'",
+            ip=ip, user_agent=ua, user_id=user_id,
+        )
         conn.commit()
         conn.close()
-        return {"ok": True, "dev_addr": dev_addr, "name": final_name}
+        return {"ok": True, "code": "ok", "dev_addr": dev_addr, "name": final_name}
     except Exception as e:
-        return {"ok": False, "msg": f"Error al emparejar: {e}"}
+        try:
+            conn = _get_db()
+            _log_pair_attempt(
+                conn, kind="device", target_id=(payload or {}).get("dev_addr", "?"),
+                code_attempted=None, result="error", reason=str(e),
+            )
+            conn.commit(); conn.close()
+        except Exception:
+            pass
+        return {"ok": False, "code": "error", "msg": f"Error al emparejar: {e}"}
 
 
 @router.post("/devices")
@@ -1160,6 +1620,228 @@ async def create_device(payload: dict = Body(...)):
         return {"ok": False, "msg": "DevAddr ya existe"}
     except Exception:
         return {"ok": False, "msg": "Error al crear dispositivo"}
+
+
+# ── Pairing admin: refresh / regenerate / audit log ───────────────
+
+@router.post("/gateways/{gw_id}/pairing/refresh")
+async def refresh_gateway_pairing(
+    gw_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    current_user: User = Depends(require_admin),
+):
+    """Extiende la ventana del código actual sin tocarlo (útil mientras el
+    usuario está tipeándolo en otra pestaña). Si no hay código, genera uno
+    nuevo de 6 dígitos. Sólo admin.
+
+    Body opcional: { "ttl_min": 30 } (override por-request).
+    """
+    ttl = int(payload.get("ttl_min") or settings.PAIRING_TTL_MIN)
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT gateway_id, pairing_code, is_paired FROM gateways WHERE gateway_id = ?",
+            (gw_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Gateway no encontrado"}
+
+        if row["is_paired"]:
+            conn.close()
+            return {"ok": False, "code": "already_paired",
+                    "msg": "El gateway ya está registrado"}
+
+        new_code = row["pairing_code"] or _gen_random_code(6)
+        conn.execute(
+            """
+            UPDATE gateways
+               SET pairing_code = ?,
+                   pairing_expires_at = datetime('now', ?)
+             WHERE gateway_id = ?
+            """,
+            (new_code, f"+{ttl} minutes", gw_id),
+        )
+        _log_pair_attempt(
+            conn, kind="gateway", target_id=gw_id,
+            code_attempted=None, result="ok",
+            reason=f"admin refresh ({current_user.email}) ttl={ttl}min",
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            user_id=str(current_user.id),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "code": new_code, "expires_in_min": ttl,
+                "gateway_id": gw_id}
+    except Exception as e:
+        conn.close()
+        return {"ok": False, "code": "error", "msg": str(e)}
+
+
+@router.post("/gateways/{gw_id}/pairing/regenerate")
+async def regenerate_gateway_pairing(
+    gw_id: str,
+    request: Request,
+    payload: dict = Body(default_factory=dict),
+    current_user: User = Depends(require_admin),
+):
+    """Fuerza un código NUEVO (invalida el anterior) y estampa la expiración.
+    Útil cuando el código actual ya está comprometido o expirado.
+    """
+    ttl = int(payload.get("ttl_min") or settings.PAIRING_TTL_MIN)
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT gateway_id, is_paired FROM gateways WHERE gateway_id = ?",
+            (gw_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Gateway no encontrado"}
+
+        if row["is_paired"]:
+            conn.close()
+            return {"ok": False, "code": "already_paired",
+                    "msg": "El gateway ya está registrado"}
+
+        new_code = _gen_random_code(6)
+        conn.execute(
+            """
+            UPDATE gateways
+               SET pairing_code = ?,
+                   pairing_expires_at = datetime('now', ?)
+             WHERE gateway_id = ?
+            """,
+            (new_code, f"+{ttl} minutes", gw_id),
+        )
+        _log_pair_attempt(
+            conn, kind="gateway", target_id=gw_id,
+            code_attempted=None, result="ok",
+            reason=f"admin regenerate ({current_user.email}) ttl={ttl}min",
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            user_id=str(current_user.id),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "code": new_code, "expires_in_min": ttl,
+                "gateway_id": gw_id}
+    except Exception as e:
+        conn.close()
+        return {"ok": False, "code": "error", "msg": str(e)}
+
+
+@router.post("/gateways/{gw_id}/pairing/accept-code")
+async def accept_pairing_code(
+    gw_id: str,
+    request: Request,
+    payload: dict = Body(...),
+    current_user: User = Depends(require_admin),
+):
+    """Le dice al server: "estoy mirando el GW y muestra este código".
+
+    Caso de uso: el ESP32 reseteó y generó un código nuevo, pero todavía
+    no hizo su primer sync post-reset → la DB tiene un código distinto
+    al que muestra la pantalla. El admin (que está físicamente con el GW)
+    llama a este endpoint con el código que ve, y a partir de ahí el
+    endpoint /gateways/pair acepta ese código.
+
+    Si después el GW sincroniza con un código distinto, el comportamiento
+    normal de /gateway/sync sobreescribirá — pero我们已经解决了 la ventana.
+
+    Body: { "code": "123456" }
+    """
+    code = (payload.get("code") or "").strip()
+    if not code or not code.isdigit() or not (4 <= len(code) <= 8):
+        return {"ok": False, "code": "invalid",
+                "msg": "code requerido (4-8 dígitos numéricos)"}
+    ttl = int(payload.get("ttl_min") or settings.PAIRING_TTL_MIN)
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT gateway_id, is_paired, pairing_code, pairing_expires_at "
+            "FROM gateways WHERE gateway_id = ?",
+            (gw_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Gateway no encontrado"}
+        if row["is_paired"]:
+            conn.close()
+            return {"ok": False, "code": "already_paired",
+                    "msg": "El gateway ya está registrado"}
+
+        previous = row["pairing_code"]
+        conn.execute(
+            """
+            UPDATE gateways
+               SET pairing_code = ?,
+                   pairing_expires_at = datetime('now', ?)
+             WHERE gateway_id = ?
+            """,
+            (code, f"+{ttl} minutes", gw_id),
+        )
+        _log_pair_attempt(
+            conn, kind="gateway", target_id=gw_id,
+            code_attempted=code, result="ok",
+            reason=(f"admin accept-code ({current_user.email}) "
+                    f"prev={previous} ttl={ttl}min"),
+            ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            user_id=str(current_user.id),
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "ok": True,
+            "code": code,
+            "previous_code": previous,
+            "expires_in_min": ttl,
+            "gateway_id": gw_id,
+        }
+    except Exception as e:
+        conn.close()
+        return {"ok": False, "code": "error", "msg": str(e)}
+
+
+@router.get("/pairing/attempts")
+async def list_pairing_attempts(
+    kind: str | None = Query(None, pattern="^(gateway|device)$"),
+    target_id: str | None = Query(None),
+    result: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(require_admin),
+):
+    """Audit log de intentos de pairing (últimos N). Sólo admin."""
+    conn = _get_db()
+    try:
+        where = []
+        params = []
+        if kind:
+            where.append("kind = ?"); params.append(kind)
+        if target_id:
+            where.append("target_id = ?"); params.append(target_id)
+        if result:
+            where.append("result = ?"); params.append(result)
+        sql = "SELECT id, kind, target_id, code_attempted, result, reason, ip, user_agent, user_id, created_at FROM pairing_attempts"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+        return {"attempts": [dict(r) for r in rows]}
+    except Exception as e:
+        conn.close()
+        return {"attempts": [], "msg": str(e)}
+
+
+def _gen_random_code(n: int = 6) -> str:
+    """Genera un código numérico de N dígitos (equivalente al del ESP32)."""
+    import secrets
+    return f"{secrets.randbelow(10 ** n):0{n}d}"
 
 
 @router.put("/devices/{dev_addr}")
@@ -1188,13 +1870,54 @@ async def update_device(dev_addr: str, payload: dict = Body(...)):
 
 
 @router.delete("/devices/{dev_addr}")
-async def delete_device(dev_addr: str):
+async def delete_device(
+    dev_addr: str,
+    request: Request,
+    force: bool = Query(False, description="Borra aunque esté paired y limpia packets asociados"),
+    current_user: User = Depends(require_admin),
+):
+    """Elimina un device. Sólo admin.
+
+    Sin `force=true`: falla con `is_paired` si está registrado.
+    Con `force=true`: revierte is_paired, borra los packets asociados y
+    registra la acción en el audit log.
+    """
     try:
         conn = _get_db()
+        row = conn.execute(
+            "SELECT is_paired FROM devices WHERE dev_addr = ?", (dev_addr,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Device no existe"}
+        if row["is_paired"] and not force:
+            conn.close()
+            return {
+                "ok": False,
+                "code": "is_paired",
+                "msg": ("El device está registrado (is_paired=1). Para eliminarlo "
+                        "de todas formas, mandá ?force=true (admin) — eso borra "
+                        "también los packets asociados."),
+            }
+
+        packets_deleted = 0
+        # Siempre limpiamos los packets asociados (evitamos huérfanos).
+        cur = conn.execute("DELETE FROM packets WHERE dev_addr = ?", (dev_addr,))
+        packets_deleted = cur.rowcount
+        if force:
+            _log_pair_attempt(
+                conn, kind="device", target_id=dev_addr,
+                code_attempted=None, result="ok",
+                reason=(f"force-delete by {current_user.email} "
+                        f"(was_paired, packets_deleted={packets_deleted})"),
+                ip=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                user_id=str(current_user.id),
+            )
         conn.execute("DELETE FROM devices WHERE dev_addr=?", (dev_addr,))
         conn.commit()
         conn.close()
-        return {"ok": True}
+        return {"ok": True, "packets_deleted": packets_deleted}
     except Exception:
         return {"ok": False, "msg": "Error al eliminar dispositivo"}
 
@@ -1260,19 +1983,258 @@ async def update_config(payload: dict = Body(...)):
         return {"ok": False, "msg": "Error al guardar config"}
 
 
-# ── Clear ──────────────────────────────────────────────────────────
+# ── Clear / Reset ─────────────────────────────────────────────────
+#
+# Los endpoints destructivos están separados para evitar perder estado de
+# pairing. "clear" sólo borra packets; gateways y devices se limpian con
+# endpoints dedicados que rechazan borrar filas paired. "reset" es la
+# opción nuclear (wipe total) y exige confirm=true.
+
+import json as _json
+
+
+def _take_snapshot(conn: sqlite3.Connection, kind: str, reason: str, user_id: str | None) -> int:
+    """Hace un JSON snapshot de las tablas a borrar y lo guarda.
+
+    Devuelve el id del snapshot. Si no había filas, devuelve 0 y no guarda nada.
+    """
+    payloads: dict[str, list[dict]] = {}
+    if kind in ("gateways", "all"):
+        payloads["gateways"] = [dict(r) for r in conn.execute("SELECT * FROM gateways").fetchall()]
+    if kind in ("devices", "all"):
+        payloads["devices"] = [dict(r) for r in conn.execute("SELECT * FROM devices").fetchall()]
+    if not any(payloads.values()):
+        return 0
+    cur = conn.execute(
+        "INSERT INTO clear_snapshots (kind, payload, reason, user_id) VALUES (?, ?, ?, ?)",
+        (kind, _json.dumps(payloads, default=str), reason, user_id),
+    )
+    return cur.lastrowid or 0
+
 
 @router.post("/clear")
-async def clear_data():
+async def clear_packets(current_user: User = Depends(require_admin)):
+    """Borra SOLO packets (lecturas). No toca gateways ni devices.
+
+    Use los endpoints /lora/clear/gateways o /lora/clear/devices para limpiar
+    inventario (siempre admin-only y rechazando filas paired).
+    """
     try:
         conn = _get_db()
-        conn.execute("DELETE FROM packets")
-        conn.execute("DELETE FROM gateways")
-        conn.execute("DELETE FROM devices")
+        cur = conn.execute("DELETE FROM packets")
+        deleted = cur.rowcount
         conn.commit()
         conn.close()
-        return {"ok": True}
+        print(f"[CLEAR] packets deleted={deleted} by={current_user.email}")
+        return {"ok": True, "deleted_packets": deleted}
     except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+@router.post("/clear/gateways")
+async def clear_gateways(current_user: User = Depends(require_admin)):
+    """Borra gateways NO paired. Antes hace snapshot para poder restaurar.
+
+    Falla si hay al menos un gateway paired (eso requiere /lora/reset).
+    """
+    try:
+        conn = _get_db()
+        paired = conn.execute(
+            "SELECT COUNT(*) FROM gateways WHERE is_paired = 1"
+        ).fetchone()[0]
+        if paired:
+            conn.close()
+            return {
+                "ok": False,
+                "code": "has_paired",
+                "msg": (f"Hay {paired} gateway(s) registrado(s). Usá /lora/reset "
+                        "para wipe total, o desregistralos uno por uno."),
+            }
+        snap_id = _take_snapshot(conn, "gateways", "admin /lora/clear/gateways", str(current_user.id))
+        cur = conn.execute("DELETE FROM gateways")
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        return {
+            "ok": True,
+            "deleted_gateways": deleted,
+            "snapshot_id": snap_id,
+        }
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+@router.post("/clear/devices")
+async def clear_devices(current_user: User = Depends(require_admin)):
+    """Borra devices NO paired. Antes hace snapshot para poder restaurar.
+
+    Falla si hay al menos un device paired.
+    """
+    try:
+        conn = _get_db()
+        paired = conn.execute(
+            "SELECT COUNT(*) FROM devices WHERE is_paired = 1"
+        ).fetchone()[0]
+        if paired:
+            conn.close()
+            return {
+                "ok": False,
+                "code": "has_paired",
+                "msg": (f"Hay {paired} device(s) registrado(s). Usá /lora/reset "
+                        "para wipe total, o desregistralos uno por uno."),
+            }
+        snap_id = _take_snapshot(conn, "devices", "admin /lora/clear/devices", str(current_user.id))
+        cur = conn.execute("DELETE FROM devices")
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        return {
+            "ok": True,
+            "deleted_devices": deleted,
+            "snapshot_id": snap_id,
+        }
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+@router.post("/reset")
+async def reset_lora_db(
+    payload: dict = Body(default_factory=dict),
+    current_user: User = Depends(require_admin),
+):
+    """WIPE TOTAL de la DB LoRa (packets + gateways + devices + pairing_attempts).
+
+    Hace snapshot de todo antes de borrar para poder restaurar. Requiere
+    body {"confirm": true} para evitar wipes accidentales.
+    """
+    if not payload.get("confirm"):
+        return {
+            "ok": False,
+            "code": "confirm_required",
+            "msg": ("Reset destructivo. Para confirmar, mandá body "
+                    "{\"confirm\": true}. Podés restaurar con el snapshot_id "
+                    "que devuelve la respuesta."),
+        }
+    try:
+        conn = _get_db()
+        snap_id = _take_snapshot(
+            conn, "all", "admin /lora/reset", str(current_user.id),
+        )
+        cur_p = conn.execute("DELETE FROM packets")
+        cur_g = conn.execute("DELETE FROM gateways")
+        cur_d = conn.execute("DELETE FROM devices")
+        cur_a = conn.execute("DELETE FROM pairing_attempts")
+        conn.commit()
+        conn.close()
+        print(f"[RESET] full wipe by={current_user.email} "
+              f"packets={cur_p.rowcount} gateways={cur_g.rowcount} "
+              f"devices={cur_d.rowcount} attempts={cur_a.rowcount}")
+        return {
+            "ok": True,
+            "deleted": {
+                "packets": cur_p.rowcount,
+                "gateways": cur_g.rowcount,
+                "devices": cur_d.rowcount,
+                "pairing_attempts": cur_a.rowcount,
+            },
+            "snapshot_id": snap_id,
+        }
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+@router.get("/clear/snapshots")
+async def list_snapshots(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(require_admin),
+):
+    """Lista snapshots previos a wipes. Sólo admin."""
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, kind, reason, user_id, created_at, restored_at,
+                   length(payload) AS payload_bytes
+              FROM clear_snapshots
+             ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        conn.close()
+        return {"snapshots": [dict(r) for r in rows]}
+    except Exception as e:
+        conn.close()
+        return {"snapshots": [], "msg": str(e)}
+
+
+@router.post("/clear/snapshots/{snapshot_id}/restore")
+async def restore_snapshot(
+    snapshot_id: int,
+    current_user: User = Depends(require_admin),
+):
+    """Restaura un snapshot (re-insert con INSERT OR IGNORE). No borra nada
+    que ya exista — sólo completa lo que falta."""
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM clear_snapshots WHERE id = ?", (snapshot_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"ok": False, "code": "not_found", "msg": "Snapshot no existe"}
+        if row["restored_at"]:
+            conn.close()
+            return {
+                "ok": False,
+                "code": "already_restored",
+                "msg": f"Este snapshot ya fue restaurado el {row['restored_at']}",
+            }
+
+        payload = _json.loads(row["payload"])
+        restored_gw = 0
+        restored_dev = 0
+
+        for gw in payload.get("gateways", []):
+            cols = [k for k in gw.keys() if k != "id"]
+            placeholders = ",".join(["?"] * len(cols))
+            try:
+                cur = conn.execute(
+                    f"INSERT OR IGNORE INTO gateways ({','.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    [gw[c] for c in cols],
+                )
+                restored_gw += cur.rowcount
+            except Exception as e:
+                print(f"[RESTORE] gw {gw.get('gateway_id')}: {e}")
+
+        for dev in payload.get("devices", []):
+            cols = [k for k in dev.keys() if k != "id"]
+            placeholders = ",".join(["?"] * len(cols))
+            try:
+                cur = conn.execute(
+                    f"INSERT OR IGNORE INTO devices ({','.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    [dev[c] for c in cols],
+                )
+                restored_dev += cur.rowcount
+            except Exception as e:
+                print(f"[RESTORE] dev {dev.get('dev_addr')}: {e}")
+
+        conn.execute(
+            "UPDATE clear_snapshots SET restored_at = datetime('now','localtime') "
+            "WHERE id = ?",
+            (snapshot_id,),
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "ok": True,
+            "restored_gateways": restored_gw,
+            "restored_devices": restored_dev,
+            "snapshot_id": snapshot_id,
+        }
+    except Exception as e:
+        conn.close()
         return {"ok": False, "msg": str(e)}
 
 

@@ -55,5 +55,27 @@ class Settings(BaseSettings):
     # LoRaWAN
     LORA_DB_PATH: str = "DB/lora.db"
 
+    # Pairing (gateways & devices LoRa)
+    # TTL del código de pairing en minutos. Mientras el GW siga pending y haga
+    # /gateway/sync, el server re-estampa este valor (auto-renew).
+    PAIRING_TTL_MIN: int = 30
+    # Si está activo, el server re-estampa el expiry cada vez que un GW pending
+    # reporta por /gateway/sync. Si el usuario lo desactiva, el código expira
+    # estrictamente al cabo de PAIRING_TTL_MIN desde que el GW lo generó.
+    PAIRING_AUTO_RENEW: bool = True
+    # Rate-limit de intentos de pairing por (target_id, ip). 0 desactiva.
+    PAIRING_MAX_ATTEMPTS: int = 10
+    # Ventana del rate-limit en segundos.
+    PAIRING_RATE_WINDOW_S: int = 60
+
+    # Comportamiento de /lora/ingest frente a devices no pareados.
+    # LORA_REQUIRE_PAIRING=True: sólo se guardan en `packets` las lecturas de
+    #   devices con is_paired=1. Las lecturas de devices desconocidos o no
+    #   pareados se descartan (la fila del device se auto-registra igual para
+    #   que aparezca en /devices/pending). Los packets con dev_addr que
+    #   empieza con "gw:" (lecturas propias del gateway) se guardan siempre.
+    # LORA_REQUIRE_PAIRING=False: comportamiento histórico — se guarda todo.
+    LORA_REQUIRE_PAIRING: bool = True
+
 
 settings = Settings()

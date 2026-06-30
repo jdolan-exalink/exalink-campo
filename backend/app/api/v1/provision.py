@@ -13,7 +13,9 @@ Self-reset (button 10s on device):
   → backend marks device as unprovisioned
   → device wipes NVS and reboots into pairing mode
 """
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timezone
@@ -30,6 +32,7 @@ from app.schemas.device import (
 )
 
 router = APIRouter(prefix="/provision", tags=["provision"])
+logger = logging.getLogger("provision")
 
 
 def _normalize(code: str) -> str:
@@ -37,13 +40,18 @@ def _normalize(code: str) -> str:
 
 
 @router.get("/{code}", response_model=ProvisionLookupResponse)
-async def lookup_provision(code: str, db: AsyncSession = Depends(get_db)):
+async def lookup_provision(code: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Public — check if a provision code exists and whether it's available."""
     normalized = _normalize(code)
     device = await db.scalar(
         select(Device).where(Device.provision_code == normalized)
     )
     if not device:
+        logger.info(
+            "provision.lookup code=%s ip=%s result=not_found",
+            normalized,
+            request.client.host if request.client else "-",
+        )
         raise HTTPException(404, "Código no encontrado")
     return ProvisionLookupResponse(
         provision_code=device.provision_code,
@@ -58,6 +66,7 @@ async def lookup_provision(code: str, db: AsyncSession = Depends(get_db)):
 async def claim_device(
     code: str,
     payload: ProvisionClaimRequest,
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -66,9 +75,16 @@ async def claim_device(
     device = await db.scalar(
         select(Device).where(Device.provision_code == normalized)
     )
+    ip = request.client.host if request.client else "-"
+    ua = request.headers.get("user-agent", "-")
+
     if not device:
+        logger.info("provision.claim code=%s user=%s ip=%s ua=%s result=not_found",
+                    normalized, current_user.email, ip, ua)
         raise HTTPException(404, "Código no encontrado")
     if device.is_provisioned:
+        logger.info("provision.claim code=%s user=%s ip=%s ua=%s result=already_paired device_uid=%s",
+                    normalized, current_user.email, ip, ua, device.device_uid)
         raise HTTPException(409, "Dispositivo ya registrado. Contacte al NOC para resetearlo.")
 
     est = await db.scalar(
@@ -79,6 +95,8 @@ async def claim_device(
         )
     )
     if not est:
+        logger.info("provision.claim code=%s user=%s ip=%s result=establishment_not_found",
+                    normalized, current_user.email, ip)
         raise HTTPException(404, "Establecimiento no encontrado")
 
     device.tenant_id = current_user.tenant_id
@@ -91,6 +109,8 @@ async def claim_device(
     device.updated_by = current_user.id
 
     await db.flush()
+    logger.info("provision.claim OK code=%s user=%s ip=%s device_uid=%s establishment=%s",
+                normalized, current_user.email, ip, device.device_uid, est.id)
     return {
         "ok": True,
         "message": "Dispositivo registrado exitosamente",
@@ -104,6 +124,7 @@ async def claim_device(
 async def reset_provision(
     code: str,
     payload: ProvisionResetRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -114,9 +135,15 @@ async def reset_provision(
     device = await db.scalar(
         select(Device).where(Device.provision_code == normalized)
     )
+    ip = request.client.host if request.client else "-"
+    ua = request.headers.get("user-agent", "-")
+
     if not device:
+        logger.info("provision.reset code=%s ip=%s ua=%s result=not_found", normalized, ip, ua)
         raise HTTPException(404, "Código no encontrado")
     if device.device_uid != payload.device_uid:
+        logger.warning("provision.reset code=%s ip=%s ua=%s result=forbidden device_uid=%s expected=%s",
+                       normalized, ip, ua, payload.device_uid, device.device_uid)
         raise HTTPException(403, "No autorizado")
 
     device.tenant_id = None
@@ -126,4 +153,5 @@ async def reset_provision(
     device.provisioned_by = None
 
     await db.flush()
+    logger.info("provision.reset OK code=%s device_uid=%s ip=%s", normalized, device.device_uid, ip)
     return {"ok": True, "message": "Dispositivo desregistrado. Listo para re-provisionar."}

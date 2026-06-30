@@ -65,7 +65,6 @@ def upgrade() -> None:
         sa.Column("name", sa.String(200), nullable=False),
         sa.Column("code", sa.String(50)),
         sa.Column("color", sa.String(20), server_default="#3b82f6"),
-        sa.Column("color", sa.String(20), server_default="#22c55e"),
         sa.Column("address", sa.Text),
         sa.Column("province", sa.String(100)),
         sa.Column("municipality", sa.String(100)),

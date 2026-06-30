@@ -15,8 +15,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("establishments", sa.Column("color", sa.String(length=20), server_default="#3b82f6", nullable=True))
-    op.execute("UPDATE establishments SET color = '#3b82f6' WHERE color IS NULL")
     op.create_table(
         "device_zone_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("uuid_generate_v4()")),
@@ -37,4 +35,3 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_device_zone_events_dev_created", table_name="device_zone_events")
     op.drop_table("device_zone_events")
-    op.drop_column("establishments", "color")
