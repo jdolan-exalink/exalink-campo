@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # App
     APP_NAME: str = "Exalink Campo API"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.1"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
