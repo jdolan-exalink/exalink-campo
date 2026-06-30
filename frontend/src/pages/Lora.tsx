@@ -580,6 +580,8 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">GPS</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">WiFi</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Bateria</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Temp</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Hum</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Uptime</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Pkts</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-slate-400 uppercase">Ultima</th>
@@ -639,6 +641,14 @@ function GatewaysTab({ gateways, pending, loading, pendingLoading, onPair, onDel
                           {gw.battery_pct.toFixed(0)}%
                         </span>
                       ) : <span className="text-slate-500 text-xs">—</span>}
+                    </td>
+                    <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">
+                      <span className={cn(gw.temperature != null && (gw.temperature > 38 || gw.temperature < 5) ? 'text-danger' : 'text-slate-300')}>
+                        {gw.temperature != null ? `${gw.temperature.toFixed(1)}°C` : '—'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">
+                      {gw.humidity != null ? `${gw.humidity.toFixed(0)}%` : '—'}
                     </td>
                     <td className="px-2 py-2 text-slate-400 text-xs tabular-nums font-mono">
                       {gw.uptime_s != null ? `${Math.floor(gw.uptime_s / 3600)}h${Math.floor((gw.uptime_s % 3600) / 60)}m` : '—'}

@@ -4,6 +4,7 @@ import {
   RadioTower, Wifi, WifiOff, Battery, AlertTriangle, RefreshCw, Activity, Thermometer
 } from 'lucide-react'
 import api from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { MapData, MapAnimal, MapGateway, LoraDevice, LoraGateway, Paddock, Establishment } from '@/types'
 import KPICard from '@/components/dashboard/KPICard'
 import WeatherWidget from '@/components/dashboard/WeatherWidget'
@@ -177,17 +178,36 @@ export default function Dashboard() {
           <div className="card p-3 sm:p-4 lg:p-5">
             <h3 className="text-sm font-semibold text-slate-300 mb-3">Gateways</h3>
             <div className="space-y-2 text-sm">
-              {gws.map(g => (
-                <div key={g.gateway_id} className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${g.online > 0 ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                    <span className="text-slate-300 truncate text-xs">{g.name || g.gateway_id}</span>
+              {gws.map(g => {
+                const tOut = g.temperature != null && (g.temperature > 38 || g.temperature < 5)
+                const bLow = g.battery_pct != null && g.battery_pct <= 20
+                return (
+                  <div key={g.gateway_id} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${g.online > 0 ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                      <span className="text-slate-300 truncate text-xs">{g.name || g.gateway_id}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs tabular-nums flex-shrink-0">
+                      {g.temperature != null && (
+                        <span className={cn(tOut ? 'text-danger' : 'text-slate-400')} title="Temperatura">
+                          {g.temperature.toFixed(1)}°C
+                        </span>
+                      )}
+                      {g.humidity != null && (
+                        <span className="text-slate-400" title="Humedad">{g.humidity.toFixed(0)}%</span>
+                      )}
+                      {g.battery_pct != null && (
+                        <span className={cn(bLow ? 'text-danger' : 'text-slate-400')} title="Bateria">
+                          {g.battery_pct.toFixed(0)}%
+                        </span>
+                      )}
+                      <span className={cn(g.online > 0 ? 'text-emerald-400' : 'text-slate-500')}>
+                        {g.online > 0 ? 'Online' : 'Offline'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-xs text-slate-400 tabular-nums flex-shrink-0">
-                    {g.online > 0 ? 'Online' : 'Offline'}
-                  </span>
-                </div>
-              ))}
+                )
+              })}
               {gws.length === 0 && <p className="text-xs text-slate-500">Sin gateways</p>}
             </div>
           </div>
