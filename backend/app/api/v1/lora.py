@@ -259,6 +259,7 @@ def _ensure_lora_schema() -> None:
                 ("charging",           "INTEGER DEFAULT 0"),
                 ("temperature",        "REAL"),
                 ("humidity",           "REAL"),
+                ("mac_aliases",        "TEXT"),  # IDs MAC (separados por coma) que se consolidan en esta fila paired
             ]),
             ("packets", [
                 ("battery",      "REAL"),
@@ -402,6 +403,17 @@ async def ingest(payload: dict = Body(...)):
 
     conn = _get_db()
     try:
+        # Alias lookup: si el gw_id es una MAC consolidada en una fila
+        # paired, redirigir al gateway_id canónico antes de cualquier
+        # INSERT OR IGNORE (que de otro modo recrea la fila de la MAC).
+        if gw_id != "?":
+            alias_row = conn.execute(
+                "SELECT gateway_id FROM gateways "
+                "WHERE is_paired = 1 AND (',' || COALESCE(mac_aliases, '') || ',') LIKE ?",
+                (f"%,{gw_id},%",),
+            ).fetchone()
+            if alias_row:
+                gw_id = alias_row["gateway_id"]
         # Decode JSON payload
         data = None
         if payload_json:
@@ -1017,6 +1029,19 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             return {"ok": False, "msg": "gateway_id requerido"}
 
         conn = _get_db()
+
+        # ── Alias lookup ─────────────────────────────────────────────────
+        # Si este gw_id (típicamente la MAC del ESP32) fue consolidado antes
+        # con una fila paired via mac_aliases, redirigir todo el flujo a esa
+        # fila canónica. Esto evita que cada sync recree la fila de la MAC.
+        alias_row = conn.execute(
+            "SELECT gateway_id FROM gateways "
+            "WHERE is_paired = 1 AND (',' || COALESCE(mac_aliases, '') || ',') LIKE ?",
+            (f"%,{gw_id},%",),
+        ).fetchone()
+        if alias_row:
+            gw_id = alias_row["gateway_id"]
+
         conn.execute("INSERT OR IGNORE INTO gateways (gateway_id) VALUES (?)", (gw_id,))
 
         updates = ["updated_at = CURRENT_TIMESTAMP", "last_seen = CURRENT_TIMESTAMP"]
@@ -1064,6 +1089,49 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
             )
 
         conn.execute(f"UPDATE gateways SET {', '.join(updates)} WHERE gateway_id = ?", params + [gw_id])
+
+        # ── Alias merge ──────────────────────────────────────────────────
+        # Si el GW envía un nombre que coincide con una fila paired existente
+        # (típico: GW nuevo con MAC `E85C...` que se debe consolidar con la
+        # entrada `GW-EXA` registrada por el usuario), adopta la fila paired
+        # como canónica: migra packets/devices, borra la fila auto-registrada
+        # y deja el sync trabajando contra el gateway_id amigable.
+        sync_name = (payload.get("name") or "").strip()
+        if sync_name and not is_already_paired:
+            canon = conn.execute(
+                "SELECT gateway_id, mac_aliases FROM gateways "
+                "WHERE is_paired = 1 AND lower(name) = lower(?) AND gateway_id != ?",
+                (sync_name, gw_id),
+            ).fetchone()
+            if canon:
+                canon_id = canon["gateway_id"]
+                # 1. Aplicar los mismos campos del sync sobre la fila canónica
+                conn.execute(
+                    f"UPDATE gateways SET {', '.join(updates)} WHERE gateway_id = ?",
+                    params + [canon_id],
+                )
+                # 2. Migrar FKs lógicas (packets, devices) del MAC → canónico
+                conn.execute(
+                    "UPDATE packets SET gateway_id = ? WHERE gateway_id = ?",
+                    (canon_id, gw_id),
+                )
+                conn.execute(
+                    "UPDATE devices SET gateway_id = ? WHERE gateway_id = ?",
+                    (canon_id, gw_id),
+                )
+                # 3. Persistir el MAC como alias para que próximos syncs
+                #    se redirijan directo sin pasar por este merge.
+                existing_aliases = canon["mac_aliases"] or ""
+                alias_list = [a.strip() for a in existing_aliases.split(",") if a.strip()]
+                if gw_id not in alias_list:
+                    alias_list.append(gw_id)
+                    conn.execute(
+                        "UPDATE gateways SET mac_aliases = ? WHERE gateway_id = ?",
+                        (",".join(alias_list), canon_id),
+                    )
+                # 4. Borrar la fila auto-registrada
+                conn.execute("DELETE FROM gateways WHERE gateway_id = ?", (gw_id,))
+                gw_id = canon_id
 
         # Guardar lectura de sensores del GW como packet para historial
         # (throttle: solo si la ultima lectura del GW es > 5 min)
@@ -1804,6 +1872,64 @@ async def accept_pairing_code(
     except Exception as e:
         conn.close()
         return {"ok": False, "code": "error", "msg": str(e)}
+
+
+@router.post("/gateways/{gw_id}/aliases")
+async def add_gateway_alias(
+    gw_id: str,
+    payload: dict = Body(...),
+    current_user: User = Depends(require_admin),
+):
+    """Vincula un gateway_id (típicamente la MAC del ESP32) como alias de la
+    fila paired `gw_id`. A partir de acá, cada /gateway/sync que llegue con
+    ese MAC se redirige a esta fila y no se crea una nueva.
+
+    Body: { "mac": "E85C65BA2010" }
+    """
+    mac = (payload.get("mac") or "").strip()
+    if not mac:
+        return {"ok": False, "msg": "mac requerido"}
+    if mac == gw_id:
+        return {"ok": False, "msg": "mac debe ser distinto de gateway_id"}
+
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            "SELECT gateway_id, is_paired, mac_aliases FROM gateways WHERE gateway_id = ?",
+            (gw_id,),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "msg": f"gateway {gw_id} no existe"}
+        if not row["is_paired"]:
+            return {"ok": False, "msg": f"gateway {gw_id} no está paired"}
+
+        # Migrar FKs lógicas del MAC hacia la fila canónica (idempotente)
+        conn.execute(
+            "UPDATE packets SET gateway_id = ? WHERE gateway_id = ?",
+            (gw_id, mac),
+        )
+        conn.execute(
+            "UPDATE devices SET gateway_id = ? WHERE gateway_id = ?",
+            (gw_id, mac),
+        )
+        # Borrar fila auto-registrada si existe
+        conn.execute("DELETE FROM gateways WHERE gateway_id = ?", (mac,))
+
+        existing = row["mac_aliases"] or ""
+        aliases = [a.strip() for a in existing.split(",") if a.strip()]
+        if mac not in aliases:
+            aliases.append(mac)
+        conn.execute(
+            "UPDATE gateways SET mac_aliases = ? WHERE gateway_id = ?",
+            (",".join(aliases), gw_id),
+        )
+        conn.commit()
+        return {"ok": True, "gateway_id": gw_id, "mac_aliases": aliases}
+    except Exception as e:
+        conn.rollback()
+        return {"ok": False, "msg": str(e)}
+    finally:
+        conn.close()
 
 
 @router.get("/pairing/attempts")
