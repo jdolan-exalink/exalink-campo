@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import {
   Cpu, Wifi, WifiOff, Battery, BatteryLow, BatteryFull, RadioTower, Satellite,
-  MapPin, X, Thermometer, Droplet, Activity, LineChart as ChartIcon, ChevronLeft, ChevronRight
+  MapPin, X, LineChart as ChartIcon, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import api from '@/lib/api'
 import type { LoraDevice, LoraGateway } from '@/types'
@@ -157,12 +157,6 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
   const todayStr = new Date().toLocaleDateString('en-CA')
   const [selectedDate, setSelectedDate] = useState<string>(todayStr)
 
-  const { data: daysData } = useQuery<{ days: string[] }>({
-    queryKey: ['device-available-days', devAddr],
-    queryFn: () => api.get(`/lora/devices/${devAddr}/available-days`).then(r => r.data),
-  })
-  const availableDays = daysData?.days ?? []
-
   const { data, isLoading } = useQuery<{ points: Record<string, any>[] }>({
     queryKey: ['device-sensor-history', devAddr, selectedDate],
     queryFn: () => api.get(`/lora/devices/${devAddr}/sensor-history`, {
@@ -171,9 +165,6 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
   })
 
   const points = data?.points ?? []
-  const hasTemp = points.some(p => p.t != null)
-  const hasHum  = points.some(p => p.h != null)
-  const hasBat  = points.some(p => p.b != null)
   const gpsPoints = points.filter(p => p.lt != null)
 
   const goPrevDay = () => {
@@ -209,15 +200,6 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
             className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-brand-500"
           />
           <button onClick={goNextDay} disabled={selectedDate >= todayStr} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-surface-800 disabled:opacity-30"><ChevronRight size={18} /></button>
-          {availableDays.length > 0 && (
-            <select
-              value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value)}
-              className="bg-surface-800 border border-surface-700 rounded-lg px-2 py-1.5 text-xs text-slate-400 focus:outline-none"
-            >
-              {availableDays.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          )}
         </div>
 
         {isLoading ? (
@@ -226,57 +208,23 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
           <div className="h-64 flex items-center justify-center text-slate-500">Sin datos para {selectedDate}</div>
         ) : (
           <div className="space-y-3">
-            {/* Temperatura */}
-            {hasTemp && (
-              <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
-                  <Thermometer size={12} className="text-amber-400" /> Temperatura (°C)
-                </p>
-                <ResponsiveContainer width="100%" height={120}>
-                  <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={['auto', 'auto']} />
-                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
-                    <Line type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} name="Temp" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            {/* Humedad */}
-            {hasHum && (
-              <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
-                  <Droplet size={12} className="text-cyan-400" /> Humedad (%)
-                </p>
-                <ResponsiveContainer width="100%" height={120}>
-                  <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} />
-                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
-                    <Line type="monotone" dataKey="h" stroke="#06b6d4" strokeWidth={2} dot={false} name="Hum" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            {/* Bateria */}
-            {hasBat && (
-              <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
-                  <Activity size={12} className="text-green-400" /> Bateria (%)
-                </p>
-                <ResponsiveContainer width="100%" height={120}>
-                  <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} />
-                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
-                    <Line type="monotone" dataKey="b" stroke="#22c55e" strokeWidth={2} dot={false} name="Bat" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+            {/* Grafico unificado con 3 lineas y ejes duales */}
+            <div className="card p-3">
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={points}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#475569' }} domain={['auto', 'auto']} label={{ value: '°C', angle: -90, position: 'insideLeft', fill: '#f59e0b', fontSize: 11 }} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} label={{ value: '%', angle: 90, position: 'insideRight', fill: '#475569', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} name="Temperatura" connectNulls />
+                  <Line yAxisId="right" type="monotone" dataKey="h" stroke="#06b6d4" strokeWidth={2} dot={false} name="Humedad" connectNulls />
+                  <Line yAxisId="right" type="monotone" dataKey="b" stroke="#22c55e" strokeWidth={2} dot={false} name="Bateria" connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
             {/* GPS solo movimiento */}
             {gpsPoints.length > 0 && (
               <div className="card p-3">
