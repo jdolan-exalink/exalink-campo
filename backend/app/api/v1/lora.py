@@ -758,6 +758,41 @@ async def get_devices(db: AsyncSession = Depends(get_db)):
         return {"devices": []}
 
 
+@router.get("/devices/{dev_addr}/sensor-history")
+async def get_device_sensor_history(
+    dev_addr: str,
+    limit: int = Query(72, ge=1, le=500),
+):
+    try:
+        conn = _get_db()
+        rows = conn.execute(
+            """
+            SELECT created_at, temperature, humidity, battery,
+                   lat, lon, rssi, snr
+            FROM packets
+            WHERE dev_addr = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (dev_addr, limit),
+        ).fetchall()
+        conn.close()
+        points = []
+        for row in reversed(rows):
+            p = {"ts": row["created_at"]}
+            if row["temperature"] is not None: p["t"] = round(row["temperature"], 1)
+            if row["humidity"] is not None:    p["h"] = round(row["humidity"], 1)
+            if row["battery"] is not None:     p["b"] = round(row["battery"], 1)
+            if row["lat"] is not None:         p["lt"] = row["lat"]
+            if row["lon"] is not None:         p["ln"] = row["lon"]
+            if row["rssi"] is not None:        p["rssi"] = row["rssi"]
+            if row["snr"] is not None:         p["snr"] = round(row["snr"], 1)
+            points.append(p)
+        return {"dev_addr": dev_addr, "points": points}
+    except Exception:
+        return {"dev_addr": dev_addr, "points": []}
+
+
 @router.get("/devices/{dev_addr}/temperature-history")
 async def get_device_temperature_history(
     dev_addr: str,

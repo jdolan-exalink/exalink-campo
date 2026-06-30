@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import {
   RadioTower, Activity, Satellite, Database, Clock, Settings, Table, Save,
   Wifi, X, Plus, Trash2, ScrollText, Antenna, Router, Waves, Pencil, Check,
-  Battery, BatteryLow, BatteryFull, MapPin, Navigation, KeyRound, RefreshCw
+  Battery, BatteryLow, BatteryFull, MapPin, Navigation, KeyRound, RefreshCw, LineChart as ChartIcon
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
@@ -780,6 +781,7 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onDelete
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState('sensor')
   const [editFreq, setEditFreq] = useState('60')
+  const [historyAddr, setHistoryAddr] = useState<string | null>(null)
 
   const startEdit = (dev: LoraDevice) => { setEditingAddr(dev.dev_addr); setEditName(dev.name || ''); setEditType(dev.device_type); setEditFreq(String(dev.refresh_freq_s ?? 60)) }
   const cancelEdit = () => setEditingAddr(null)
@@ -891,6 +893,7 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onDelete
                   <td className="px-2 py-2">
                     <div className="flex items-center gap-1">
                       {isEditing ? <><button onClick={() => saveEdit(dev.dev_addr)} className="text-field hover:text-field/80 p-1"><Check size={14} /></button><button onClick={cancelEdit} className="text-slate-400 hover:text-white p-1"><X size={14} /></button></> : <button onClick={() => startEdit(dev)} className="text-slate-400 hover:text-brand-400 p-1"><Pencil size={14} /></button>}
+                      <button onClick={() => setHistoryAddr(dev.dev_addr)} className="text-slate-400 hover:text-purple-400 p-1"><ChartIcon size={14} /></button>
                       <button onClick={() => onDelete(dev.dev_addr, dev.name)} className="text-slate-500 hover:text-danger p-1"><Trash2 size={14} /></button>
                     </div>
                   </td>
@@ -898,6 +901,103 @@ function DevicesTab({ devices, pendingDevices, loading, pendingLoading, onDelete
             </tbody>
           </table>
         </div>
+      </div>
+
+      {historyAddr && <DeviceHistoryModal devAddr={historyAddr} onClose={() => setHistoryAddr(null)} />}
+    </div>
+  )
+}
+
+
+function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: () => void }) {
+  const { data, isLoading } = useQuery<{ points: Record<string, any>[] }>({
+    queryKey: ['lora-device-sensor-history', devAddr],
+    queryFn: () => api.get(`/lora/devices/${devAddr}/sensor-history`, { params: { limit: 100 } }).then(r => r.data),
+  })
+
+  const points = data?.points ?? []
+
+  const hasTemp = points.some(p => p.t != null)
+  const hasHum  = points.some(p => p.h != null)
+  const hasBat  = points.some(p => p.b != null)
+  const hasGps  = points.some(p => p.lt != null)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-surface-900 border border-surface-700 rounded-xl p-6 w-full max-w-3xl max-h-[85vh] overflow-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <ChartIcon size={18} className="text-purple-400" />
+            Historial — <span className="font-mono text-sm">{devAddr}</span>
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><X size={18} /></button>
+        </div>
+
+        {isLoading ? (
+          <div className="h-64 flex items-center justify-center text-slate-500">Cargando...</div>
+        ) : points.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-slate-500">Sin datos historicos</div>
+        ) : (
+          <div className="space-y-4">
+            {hasTemp && (
+              <div className="card p-3">
+                <p className="text-xs text-slate-400 mb-2">Temperatura (°C)</p>
+                <ResponsiveContainer width="100%" height={140}>
+                  <LineChart data={points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
+                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={['auto', 'auto']} />
+                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
+                    <Line type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {hasHum && (
+              <div className="card p-3">
+                <p className="text-xs text-slate-400 mb-2">Humedad (%)</p>
+                <ResponsiveContainer width="100%" height={140}>
+                  <LineChart data={points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
+                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
+                    <Line type="monotone" dataKey="h" stroke="#06b6d4" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {hasBat && (
+              <div className="card p-3">
+                <p className="text-xs text-slate-400 mb-2">Bateria (%)</p>
+                <ResponsiveContainer width="100%" height={140}>
+                  <LineChart data={points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
+                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
+                    <Line type="monotone" dataKey="b" stroke="#22c55e" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {hasGps && (
+              <div className="card p-3">
+                <p className="text-xs text-slate-400 mb-2">GPS (ultimos 5)</p>
+                <div className="space-y-1">
+                  {points.filter(p => p.lt != null).slice(-5).reverse().map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-slate-300 font-mono">
+                      <MapPin size={11} className="text-field" />
+                      {p.lt?.toFixed(5)}, {p.ln?.toFixed(5)}
+                      <span className="text-slate-500">{p.ts?.substring(11, 16)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="text-[10px] text-slate-500 text-center">{points.length} muestras</p>
+          </div>
+        )}
       </div>
     </div>
   )
