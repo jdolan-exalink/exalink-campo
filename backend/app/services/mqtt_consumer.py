@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import aiomqtt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.models.device import Device
 from app.models.animal import Animal
 from app.models.location import Location
 from app.models.alert import Alert, AlertType, AlertSeverity, AlertStatus
+from app.models.alert_config import AlertConfig
 from geoalchemy2.shape import from_shape
 from shapely.geometry import Point
 
@@ -18,6 +19,80 @@ logger = logging.getLogger(__name__)
 
 TOPIC_LOCATION = "exalink/+/devices/+/location"
 TOPIC_STATUS = "exalink/+/devices/+/status"
+
+
+async def _load_configs(db: AsyncSession, tenant_id) -> dict[AlertType, AlertConfig]:
+    result = await db.execute(
+        select(AlertConfig).where(AlertConfig.tenant_id == tenant_id)
+    )
+    return {cfg.alert_type: cfg for cfg in result.scalars().all()}
+
+
+async def _maybe_alert(
+    db: AsyncSession,
+    tenant_id,
+    alert_type: AlertType,
+    configs: dict[AlertType, AlertConfig],
+    *,
+    device_id=None,
+    animal_id=None,
+    title: str,
+    message: str,
+    fallback_severity: AlertSeverity = AlertSeverity.WARNING,
+) -> None:
+    """Crea una alerta respetando la configuración (enabled, repeat, browser_notify).
+
+    Deduplica: si existe una alerta OPEN del mismo tipo+device, sólo se vuelve a
+    notificar si pasó el repeat_interval_minutes desde last_notified_at.
+    """
+    cfg = configs.get(alert_type)
+    if cfg and not cfg.enabled:
+        return
+
+    severity = cfg.severity if cfg else fallback_severity
+
+    # Buscar alerta abierta existente del mismo tipo y dispositivo
+    q = select(Alert).where(
+        Alert.tenant_id == tenant_id,
+        Alert.alert_type == alert_type,
+        Alert.status == AlertStatus.OPEN,
+    )
+    if device_id is not None:
+        q = q.where(Alert.device_id == device_id)
+    else:
+        q = q.where(Alert.title == title)
+    result = await db.execute(q)
+    existing = result.scalar_one_or_none()
+
+    now = datetime.now(timezone.utc)
+
+    if existing:
+        repeat_min = cfg.repeat_interval_minutes if cfg else 0
+        if repeat_min <= 0:
+            return
+        last = existing.last_notified_at or existing.created_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        if now - last < timedelta(minutes=repeat_min):
+            return
+        existing.last_notified_at = now
+        existing.notified = True
+        return
+
+    alert = Alert(
+        tenant_id=tenant_id,
+        device_id=device_id,
+        animal_id=animal_id,
+        alert_type=alert_type,
+        severity=severity,
+        status=AlertStatus.OPEN,
+        title=title,
+        message=message,
+        notified=True,
+        last_notified_at=now,
+        created_by=None,
+    )
+    db.add(alert)
 
 
 async def process_location(payload: dict, db: AsyncSession) -> None:
@@ -66,28 +141,45 @@ async def process_location(payload: dict, db: AsyncSession) -> None:
     )
     db.add(loc)
 
-    # Low battery alert
+    configs = await _load_configs(db, device.tenant_id)
+
+    # Low battery alert (umbral configurable)
     battery = payload.get("battery")
-    if battery is not None and battery <= 15:
-        existing = await db.execute(
-            select(Alert).where(
-                Alert.device_id == device.id,
-                Alert.alert_type == AlertType.LOW_BATTERY,
-                Alert.status == AlertStatus.OPEN,
-            )
-        )
-        if not existing.scalar_one_or_none():
-            alert = Alert(
-                tenant_id=device.tenant_id,
+    if battery is not None and device.animal_id is not None:
+        bat_cfg = configs.get(AlertType.LOW_BATTERY)
+        threshold = bat_cfg.threshold_value if bat_cfg else 15
+        if threshold is not None and battery <= threshold:
+            await _maybe_alert(
+                db, device.tenant_id, AlertType.LOW_BATTERY, configs,
                 device_id=device.id,
                 animal_id=device.animal_id,
-                alert_type=AlertType.LOW_BATTERY,
-                severity=AlertSeverity.WARNING,
                 title=f"Batería baja: {device.device_uid} ({battery}%)",
                 message=f"El dispositivo {device.device_uid} tiene {battery}% de batería.",
-                created_by=None,
             )
-            db.add(alert)
+
+    # Temperature alerts (umbrales configurables)
+    temp = payload.get("temperature")
+    if temp is not None and device.animal_id is not None:
+        tlow = configs.get(AlertType.TEMPERATURE_LOW)
+        thigh = configs.get(AlertType.TEMPERATURE_HIGH)
+        if tlow and tlow.threshold_min is not None and temp <= tlow.threshold_min:
+            await _maybe_alert(
+                db, device.tenant_id, AlertType.TEMPERATURE_LOW, configs,
+                device_id=device.id,
+                animal_id=device.animal_id,
+                title=f"Temperatura baja: {device.device_uid} ({temp}°C)",
+                message=f"El dispositivo {device.device_uid} registró {temp}°C.",
+                fallback_severity=AlertSeverity.CRITICAL,
+            )
+        elif thigh and thigh.threshold_max is not None and temp >= thigh.threshold_max:
+            await _maybe_alert(
+                db, device.tenant_id, AlertType.TEMPERATURE_HIGH, configs,
+                device_id=device.id,
+                animal_id=device.animal_id,
+                title=f"Temperatura alta: {device.device_uid} ({temp}°C)",
+                message=f"El dispositivo {device.device_uid} registró {temp}°C.",
+                fallback_severity=AlertSeverity.CRITICAL,
+            )
 
     await db.commit()
     logger.debug("Ubicación procesada: %s lat=%s lon=%s", device_uid, lat, lon)

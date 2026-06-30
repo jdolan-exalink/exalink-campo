@@ -35,14 +35,17 @@ export const severityColor: Record<AlertSeverity, string> = {
 
 export const alertTypeLabel: Record<AlertType, string> = {
   outside_geofence: 'Fuera de geocerca',
+  outside_field: 'Fuera de campo',
   immobile: 'Animal inmóvil',
   low_battery: 'Batería baja',
   device_offline: 'Dispositivo offline',
+  prolonged_disconnect: 'Desconexión prolongada',
   abnormal_activity: 'Actividad anormal',
   possible_heat: 'Posible celo',
   possible_birth: 'Posible parto',
   vaccine_due: 'Vacuna pendiente',
-  temperature_high: 'Temperatura alta',
+  temperature_low: 'Temp. baja',
+  temperature_high: 'Temp. alta',
   manual: 'Manual',
 }
 

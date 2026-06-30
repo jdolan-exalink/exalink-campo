@@ -7,6 +7,7 @@ import Animals from '@/pages/Animals'
 import Paddocks from '@/pages/Paddocks'
 import Devices from '@/pages/Devices'
 import Alerts from '@/pages/Alerts'
+import AlertConfigPage from '@/pages/AlertConfig'
 import Health from '@/pages/Health'
 import Reproduction from '@/pages/Reproduction'
 import Weights from '@/pages/Weights'
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="paddocks" element={<Paddocks />} />
           <Route path="devices" element={<Devices />} />
           <Route path="alerts" element={<Alerts />} />
+          <Route path="alerts/config" element={<AlertConfigPage />} />
           <Route path="health" element={<Health />} />
           <Route path="reproduction" element={<Reproduction />} />
           <Route path="weights" element={<Weights />} />

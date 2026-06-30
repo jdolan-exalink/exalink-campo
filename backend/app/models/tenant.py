@@ -27,3 +27,4 @@ class Tenant(UUIDMixin, TimestampMixin, Base):
     animals: Mapped[list["Animal"]] = relationship("Animal", back_populates="tenant", lazy="noload")
     devices: Mapped[list["Device"]] = relationship("Device", back_populates="tenant", lazy="noload")
     alerts: Mapped[list["Alert"]] = relationship("Alert", back_populates="tenant", lazy="noload")
+    alert_configs: Mapped[list["AlertConfig"]] = relationship("AlertConfig", back_populates="tenant", lazy="noload")

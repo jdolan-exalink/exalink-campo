@@ -38,6 +38,8 @@ async def list_alerts(
     status: AlertStatus | None = None,
     severity: AlertSeverity | None = None,
     alert_type: AlertType | None = None,
+    date_from: datetime | None = Query(None, alias="from"),
+    date_to: datetime | None = Query(None, alias="to"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_active_user),
@@ -54,6 +56,10 @@ async def list_alerts(
         q = q.where(Alert.severity == severity)
     if alert_type:
         q = q.where(Alert.alert_type == alert_type)
+    if date_from:
+        q = q.where(Alert.created_at >= date_from)
+    if date_to:
+        q = q.where(Alert.created_at <= date_to)
     q = q.order_by(Alert.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(q)
     return [_serialize(a) for a in result.scalars().all()]

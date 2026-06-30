@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, createContext, useContext } from 'rea
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import useDeviceMonitor from '@/hooks/useDeviceMonitor'
+import useAlertNotifications from '@/hooks/useAlertNotifications'
 
 interface SidebarContextValue {
   sidebarOpen: boolean
@@ -21,6 +22,7 @@ export function useSidebar() {
 
 export default function MainLayout() {
   useDeviceMonitor()
+  useAlertNotifications()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const toggleSidebar = useCallback(() => setSidebarOpen(prev => !prev), [])
   const closeSidebar = useCallback(() => setSidebarOpen(false), [])

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, Clock, AlertCircle, AlertTriangle, Info } from 'lucide-react'
+import { CheckCircle, Clock, AlertCircle, AlertTriangle, Info, Settings, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
-import type { Alert, AlertStatus, AlertSeverity } from '@/types'
-import { alertTypeLabel, severityColor, timeAgo, cn } from '@/lib/utils'
+import type { Alert, AlertStatus, AlertSeverity, AlertType } from '@/types'
+import { alertTypeLabel, severityColor, timeAgo, formatDateTime, cn } from '@/lib/utils'
 import Header from '@/components/layout/Header'
 
 const SeverityIcon = ({ s }: { s: AlertSeverity }) => {
@@ -15,15 +16,22 @@ const SeverityIcon = ({ s }: { s: AlertSeverity }) => {
 
 export default function Alerts() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [statusFilter, setStatusFilter] = useState<AlertStatus | ''>('open')
   const [severityFilter, setSeverityFilter] = useState<AlertSeverity | ''>('')
+  const [typeFilter, setTypeFilter] = useState<AlertType | ''>('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   const { data: alerts = [], isLoading } = useQuery<Alert[]>({
-    queryKey: ['alerts', statusFilter, severityFilter],
+    queryKey: ['alerts', statusFilter, severityFilter, typeFilter, dateFrom, dateTo],
     queryFn: () => {
       const params = new URLSearchParams({ limit: '100' })
       if (statusFilter) params.set('status', statusFilter)
       if (severityFilter) params.set('severity', severityFilter)
+      if (typeFilter) params.set('alert_type', typeFilter)
+      if (dateFrom) params.set('from', new Date(dateFrom + 'T00:00:00').toISOString())
+      if (dateTo) params.set('to', new Date(dateTo + 'T23:59:59').toISOString())
       return api.get(`/alerts?${params}`).then(r => r.data)
     },
     refetchInterval: 20_000,
@@ -39,13 +47,28 @@ export default function Alerts() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['alerts'] }) },
   })
 
+  const hasDateFilter = dateFrom !== '' || dateTo !== ''
+  const clearDateFilter = () => { setDateFrom(''); setDateTo('') }
+
   return (
     <div className="flex flex-col h-full">
-      <Header title="Alertas" subtitle={`${alerts.length} alertas ${statusFilter || 'totales'}`} />
+      <Header
+        title="Alertas"
+        subtitle={`${alerts.length} alertas ${statusFilter || 'totales'}`}
+        actions={
+          <button
+            onClick={() => navigate('/alerts/config')}
+            className="btn-secondary text-xs"
+            title="Configurar alertas"
+          >
+            <Settings size={14} /> <span className="hidden sm:inline">Configurar</span>
+          </button>
+        }
+      />
 
       <div className="flex-1 overflow-auto p-6">
         {/* Filters */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-3 mb-6">
           <div className="flex rounded-lg bg-surface-800 border border-surface-700 overflow-hidden text-sm">
             {(['open', 'acknowledged', 'resolved', ''] as const).map(s => (
               <button
@@ -60,16 +83,51 @@ export default function Alerts() {
               </button>
             ))}
           </div>
+
           <select
             value={severityFilter}
             onChange={e => setSeverityFilter(e.target.value as AlertSeverity | '')}
-            className="input w-40"
+            className="input w-auto py-1.5"
           >
-            <option value="">Todas severidades</option>
+            <option value="">Toda severidad</option>
             <option value="critical">Crítica</option>
             <option value="warning">Advertencia</option>
             <option value="info">Info</option>
           </select>
+
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value as AlertType | '')}
+            className="input w-auto py-1.5"
+          >
+            <option value="">Todo tipo</option>
+            {(Object.keys(alertTypeLabel) as AlertType[]).map(t => (
+              <option key={t} value={t}>{alertTypeLabel[t]}</option>
+            ))}
+          </select>
+
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="input w-auto py-1.5"
+              title="Desde"
+            />
+            <span className="text-slate-500 text-xs">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              className="input w-auto py-1.5"
+              title="Hasta"
+            />
+            {hasDateFilter && (
+              <button onClick={clearDateFilter} className="p-1.5 text-slate-400 hover:text-danger rounded" title="Limpiar fechas">
+                <X size={14} />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -117,10 +175,11 @@ export default function Alerts() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 mt-2">
+                  <div className="flex items-center gap-3 mt-2 flex-wrap">
                     <span className={cn('badge text-xs', severityColor[alert.severity])}>
                       {alertTypeLabel[alert.alert_type]}
                     </span>
+                    <span className="text-xs text-slate-500">{formatDateTime(alert.created_at)}</span>
                     {alert.animal_ear_tag && (
                       <span className="text-xs text-slate-500 font-mono">Caravana: {alert.animal_ear_tag}</span>
                     )}

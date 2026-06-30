@@ -77,9 +77,8 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
         </div>
         <button onClick={() => navigate('/alerts')} className="relative p-2 text-slate-400 hover:text-slate-200 hover:bg-surface-800 rounded-lg transition-colors">
           <Bell size={18} />
-          <span className={`absolute top-1 right-1 w-2.5 h-2.5 rounded-full ${hasOffline ? 'bg-danger animate-pulse' : 'bg-emerald-400'}`} />
           {openAlerts > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-danger text-white text-[10px] flex items-center justify-center font-bold">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-danger text-white text-[10px] flex items-center justify-center font-bold ring-2 ring-surface-900">
               {openAlerts > 9 ? '9+' : openAlerts}
             </span>
           )}

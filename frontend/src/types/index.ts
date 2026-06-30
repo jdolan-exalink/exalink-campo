@@ -119,12 +119,31 @@ export interface Alert {
 }
 
 export type AlertType =
-  | 'outside_geofence' | 'immobile' | 'low_battery' | 'device_offline'
+  | 'outside_geofence' | 'outside_field' | 'immobile' | 'low_battery'
+  | 'device_offline' | 'prolonged_disconnect'
   | 'abnormal_activity' | 'possible_heat' | 'possible_birth'
-  | 'vaccine_due' | 'temperature_high' | 'manual'
+  | 'vaccine_due' | 'temperature_low' | 'temperature_high' | 'manual'
 
 export type AlertSeverity = 'info' | 'warning' | 'critical'
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved'
+
+export interface AlertConfig {
+  id: string
+  tenant_id: string
+  establishment_id: string | null
+  alert_type: AlertType
+  enabled: boolean
+  severity: AlertSeverity
+  threshold_value: number | null
+  threshold_min: number | null
+  threshold_max: number | null
+  repeat_interval_minutes: number
+  browser_notify: boolean
+  name: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
 
 export interface Establishment {
   id: string

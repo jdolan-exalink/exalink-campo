@@ -1,7 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Text, ForeignKey, UUID, Enum as SAEnum, DateTime, Boolean
+from sqlalchemy import String, Text, ForeignKey, UUID, Enum as SAEnum, DateTime, Boolean, Float, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import TenantScopedMixin
 from app.core.database import Base
@@ -9,13 +9,16 @@ from app.core.database import Base
 
 class AlertType(str, enum.Enum):
     OUTSIDE_GEOFENCE = "outside_geofence"
+    OUTSIDE_FIELD = "outside_field"
     IMMOBILE = "immobile"
     LOW_BATTERY = "low_battery"
     DEVICE_OFFLINE = "device_offline"
+    PROLONGED_DISCONNECT = "prolonged_disconnect"
     ABNORMAL_ACTIVITY = "abnormal_activity"
     POSSIBLE_HEAT = "possible_heat"
     POSSIBLE_BIRTH = "possible_birth"
     VACCINE_DUE = "vaccine_due"
+    TEMPERATURE_LOW = "temperature_low"
     TEMPERATURE_HIGH = "temperature_high"
     MANUAL = "manual"
 
@@ -30,6 +33,18 @@ class AlertStatus(str, enum.Enum):
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
+
+
+# Alert types that can be configured by the user via AlertConfig
+CONFIGURABLE_ALERT_TYPES = {
+    AlertType.TEMPERATURE_LOW,
+    AlertType.TEMPERATURE_HIGH,
+    AlertType.LOW_BATTERY,
+    AlertType.DEVICE_OFFLINE,
+    AlertType.PROLONGED_DISCONNECT,
+    AlertType.OUTSIDE_GEOFENCE,
+    AlertType.OUTSIDE_FIELD,
+}
 
 
 class Alert(TenantScopedMixin, Base):
@@ -53,6 +68,7 @@ class Alert(TenantScopedMixin, Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="alerts")
     animal: Mapped["Animal | None"] = relationship("Animal", back_populates="alerts")

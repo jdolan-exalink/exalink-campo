@@ -6,7 +6,8 @@ from app.models.herd import Herd
 from app.models.animal import Animal, AnimalSex, AnimalStatus, AnimalCategory
 from app.models.device import Device, DeviceType
 from app.models.location import Location
-from app.models.alert import Alert, AlertType, AlertSeverity, AlertStatus
+from app.models.alert import Alert, AlertType, AlertSeverity, AlertStatus, CONFIGURABLE_ALERT_TYPES
+from app.models.alert_config import AlertConfig
 from app.models.health import HealthEvent, HealthEventType
 from app.models.reproduction import ReproductionEvent, ReproductionEventType
 from app.models.weight import WeightRecord
@@ -18,7 +19,8 @@ __all__ = [
     "Animal", "AnimalSex", "AnimalStatus", "AnimalCategory",
     "Device", "DeviceType",
     "Location",
-    "Alert", "AlertType", "AlertSeverity", "AlertStatus",
+    "Alert", "AlertType", "AlertSeverity", "AlertStatus", "CONFIGURABLE_ALERT_TYPES",
+    "AlertConfig",
     "HealthEvent", "HealthEventType",
     "ReproductionEvent", "ReproductionEventType",
     "WeightRecord",
