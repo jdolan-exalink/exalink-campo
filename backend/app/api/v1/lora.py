@@ -153,6 +153,8 @@ def _ensure_lora_schema() -> None:
                 wake_time_ms INTEGER,
                 mtype_str   TEXT,
                 fcnt        INTEGER,
+                lat         REAL,
+                lon         REAL,
                 a0x REAL, a0y REAL, a0z REAL,
                 a1x REAL, a1y REAL, a1z REAL,
                 created_at  TIMESTAMP DEFAULT (datetime('now', 'localtime'))
@@ -231,6 +233,7 @@ def _ensure_lora_schema() -> None:
                 ("charging",     "INTEGER"),
                 ("wake_boots",   "INTEGER"),
                 ("wake_time_ms", "INTEGER"),
+                ("lat", "REAL"), ("lon", "REAL"),
                 ("a0x", "REAL"), ("a0y", "REAL"), ("a0z", "REAL"),
                 ("a1x", "REAL"), ("a1y", "REAL"), ("a1z", "REAL"),
             ]),
@@ -290,6 +293,7 @@ async def ingest(payload: dict = Body(...)):
         dev_addr = None
         temperature = humidity = battery = charging = None
         wake_boots = wake_time_ms = None
+        lat = lon = None
         a0x = a0y = a0z = a1x = a1y = a1z = None
 
         if isinstance(data, dict):
@@ -308,6 +312,8 @@ async def ingest(payload: dict = Body(...)):
             charging = data.get("ch")
             wake_boots = data.get("wb")
             wake_time_ms = data.get("wt")
+            lat = data.get("lt")
+            lon = data.get("ln")
             # Accelerometer
             def _sf(v):
                 try:
@@ -330,8 +336,9 @@ async def ingest(payload: dict = Body(...)):
               (gateway_id, received_at, rssi, snr, freq_mhz, sf,
                payload_hex, dev_addr, temperature, humidity, battery, charging,
                wake_boots, wake_time_ms, mtype_str, fcnt,
+               lat, lon,
                a0x, a0y, a0z, a1x, a1y, a1z, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
         """, (
             gw_id,
             payload.get("received_at", 0),
@@ -349,6 +356,7 @@ async def ingest(payload: dict = Body(...)):
             wake_time_ms,
             (payload.get("lorawan") or {}).get("mtype_str"),
             (payload.get("lorawan") or {}).get("fcnt"),
+            lat, lon,
             a0x, a0y, a0z, a1x, a1y, a1z,
         ))
 
