@@ -149,9 +149,13 @@ export default function Lora() {
   })
 
   const deleteGatewayMutation = useMutation({
-    mutationFn: (gatewayId: string) => api.delete(`/lora/gateways/${gatewayId}`),
-    onSuccess: () => { toast.success('Gateway eliminado'); queryClient.invalidateQueries({ queryKey: ['lora-gateways'] }) },
-    onError: () => toast.error('Error al eliminar'),
+    mutationFn: (gatewayId: string) => api.delete(`/lora/gateways/${gatewayId}?force=true`),
+    onSuccess: (res) => {
+      const n = res?.data?.packets_deleted ?? 0
+      toast.success(n > 0 ? `Gateway eliminado (${n} paquete${n===1?'':'s'} borrado${n===1?'':'s'})` : 'Gateway eliminado')
+      queryClient.invalidateQueries({ queryKey: ['lora-gateways'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.msg || 'Error al eliminar gateway'),
   })
 
   const updateGatewayMutation = useMutation({
@@ -162,9 +166,13 @@ export default function Lora() {
   })
 
   const deleteDeviceMutation = useMutation({
-    mutationFn: (devAddr: string) => api.delete(`/lora/devices/${devAddr}`),
-    onSuccess: () => { toast.success('Dispositivo eliminado'); queryClient.invalidateQueries({ queryKey: ['lora-devices'] }) },
-    onError: () => toast.error('Error al eliminar'),
+    mutationFn: (devAddr: string) => api.delete(`/lora/devices/${devAddr}?force=true`),
+    onSuccess: (res) => {
+      const n = res?.data?.packets_deleted ?? 0
+      toast.success(n > 0 ? `Dispositivo eliminado (${n} paquete${n===1?'':'s'} borrado${n===1?'':'s'})` : 'Dispositivo eliminado')
+      queryClient.invalidateQueries({ queryKey: ['lora-devices'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.msg || 'Error al eliminar dispositivo'),
   })
 
   const updateDeviceMutation = useMutation({
