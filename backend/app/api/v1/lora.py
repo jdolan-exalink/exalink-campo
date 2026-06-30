@@ -683,6 +683,45 @@ async def sync_gateway(payload: dict = Body(...), db: AsyncSession = Depends(get
                 params.append(int(payload["pairing_expires_at"]))
 
         conn.execute(f"UPDATE gateways SET {', '.join(updates)} WHERE gateway_id = ?", params + [gw_id])
+
+        # Guardar lectura de sensores del GW como packet para historial
+        # (throttle: solo si la ultima lectura del GW es > 5 min)
+        gw_dev = f"gw:{gw_id}"
+        last_gw_pkt = conn.execute(
+            "SELECT created_at FROM packets WHERE dev_addr = ? ORDER BY id DESC LIMIT 1",
+            (gw_dev,),
+        ).fetchone()
+        should_store = True
+        if last_gw_pkt:
+            age = conn.execute(
+                "SELECT (julianday('now','localtime') - julianday(created_at)) * 1440 FROM packets WHERE id = (SELECT MAX(id) FROM packets WHERE dev_addr = ?)",
+                (gw_dev,),
+            ).fetchone()[0]
+            if age is not None and age < 5:
+                should_store = False
+
+        if should_store:
+            conn.execute("""
+                INSERT INTO packets
+                  (gateway_id, received_at, rssi, snr, freq_mhz, sf,
+                   payload_hex, dev_addr, temperature, humidity, battery, charging,
+                   wake_boots, wake_time_ms, mtype_str, fcnt, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+            """, (
+                gw_id,
+                int(payload.get("uptime_s", 0)),
+                payload.get("wifi_rssi"),
+                None,
+                None,
+                None,
+                gw_dev,
+                payload.get("temperature"),
+                payload.get("humidity"),
+                payload.get("battery_pct"),
+                payload.get("charging"),
+                None, None, "GW_SYNC", None,
+            ))
+
         conn.commit()
         row = conn.execute(
             "SELECT name, is_paired FROM gateways WHERE gateway_id = ?", (gw_id,)
@@ -758,36 +797,107 @@ async def get_devices(db: AsyncSession = Depends(get_db)):
         return {"devices": []}
 
 
-@router.get("/devices/{dev_addr}/sensor-history")
-async def get_device_sensor_history(
-    dev_addr: str,
-    limit: int = Query(72, ge=1, le=500),
-):
+@router.get("/devices/{dev_addr}/available-days")
+async def get_device_available_days(dev_addr: str):
     try:
         conn = _get_db()
         rows = conn.execute(
-            """
-            SELECT created_at, temperature, humidity, battery,
-                   lat, lon, rssi, snr
-            FROM packets
-            WHERE dev_addr = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (dev_addr, limit),
+            "SELECT DISTINCT date(created_at) as day FROM packets WHERE dev_addr = ? ORDER BY day DESC LIMIT 90",
+            (dev_addr,),
         ).fetchall()
         conn.close()
+        return {"days": [r["day"] for r in rows]}
+    except Exception:
+        return {"days": []}
+
+
+@router.get("/devices/{dev_addr}/sensor-history")
+async def get_device_sensor_history(
+    dev_addr: str,
+    limit: int = Query(500, ge=1, le=2000),
+    date: str = Query(None, description="YYYY-MM-DD para filtrar un dia especifico"),
+):
+    try:
+        conn = _get_db()
+        if date:
+            rows = conn.execute(
+                """
+                SELECT created_at, temperature, humidity, battery,
+                       lat, lon, rssi, snr
+                FROM packets
+                WHERE dev_addr = ?
+                  AND date(created_at) = date(?)
+                ORDER BY created_at ASC
+                """,
+                (dev_addr, date),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT created_at, temperature, humidity, battery,
+                       lat, lon, rssi, snr
+                FROM packets
+                WHERE dev_addr = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (dev_addr, limit),
+            ).fetchall()
+            rows = list(reversed(rows))
+        conn.close()
+
+        # Agrupar por intervalos de ~10 minutos (tomar el promedio)
+        buckets: dict[str, list] = {}
+        for row in rows:
+            ts = row["created_at"] or ""
+            # bucket key: "YYYY-MM-DD HH:M0" (truncar minutos a decena)
+            if len(ts) >= 16:
+                minute = int(ts[14:16])
+                bucket_minute = (minute // 10) * 10
+                key = ts[:14] + f"{bucket_minute:02d}"
+            else:
+                key = ts
+
+            if key not in buckets:
+                buckets[key] = []
+            buckets[key].append(row)
+
         points = []
-        for row in reversed(rows):
-            p = {"ts": row["created_at"]}
-            if row["temperature"] is not None: p["t"] = round(row["temperature"], 1)
-            if row["humidity"] is not None:    p["h"] = round(row["humidity"], 1)
-            if row["battery"] is not None:     p["b"] = round(row["battery"], 1)
-            if row["lat"] is not None:         p["lt"] = row["lat"]
-            if row["lon"] is not None:         p["ln"] = row["lon"]
-            if row["rssi"] is not None:        p["rssi"] = row["rssi"]
-            if row["snr"] is not None:         p["snr"] = round(row["snr"], 1)
+        prev_lat, prev_lon = None, None
+        for key in sorted(buckets.keys()):
+            group = buckets[key]
+            n = len(group)
+
+            def avg(field):
+                vals = [r[field] for r in group if r[field] is not None]
+                return round(sum(vals) / len(vals), 1) if vals else None
+
+            p = {"ts": key}
+            t = avg("temperature")
+            h = avg("humidity")
+            b = avg("battery")
+            if t is not None: p["t"] = t
+            if h is not None: p["h"] = h
+            if b is not None: p["b"] = b
+            rssi = avg("rssi")
+            if rssi is not None: p["rssi"] = rssi
+
+            # GPS solo si hay movimiento (> ~15m ≈ 0.00014 grados)
+            for r in group:
+                if r["lat"] is not None and r["lon"] is not None:
+                    cur_lat, cur_lon = r["lat"], r["lon"]
+                    moved = (prev_lat is None or
+                             abs(cur_lat - prev_lat) > 0.00014 or
+                             abs(cur_lon - prev_lon) > 0.00014)
+                    if moved:
+                        p["lt"] = round(cur_lat, 6)
+                        p["ln"] = round(cur_lon, 6)
+                        prev_lat = cur_lat
+                        prev_lon = cur_lon
+                    break
+
             points.append(p)
+
         return {"dev_addr": dev_addr, "points": points}
     except Exception:
         return {"dev_addr": dev_addr, "points": []}

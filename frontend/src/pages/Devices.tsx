@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import {
   Cpu, Wifi, WifiOff, Battery, BatteryLow, BatteryFull, RadioTower, Satellite,
-  MapPin, X, Thermometer, Droplet, Activity, LineChart as ChartIcon
+  MapPin, X, Thermometer, Droplet, Activity, LineChart as ChartIcon, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import api from '@/lib/api'
 import type { LoraDevice, LoraGateway } from '@/types'
@@ -105,7 +104,9 @@ export default function Devices() {
                     <td className="px-2 py-2 text-slate-500 text-xs">{gw.lat != null ? `${gw.lat.toFixed(4)},${gw.lon?.toFixed(4)}` : '—'}</td>
                     <td className="px-2 py-2 text-slate-400 text-xs tabular-nums">{gw.total_packets ?? 0}</td>
                     <td className="px-2 py-2 text-slate-400 text-xs whitespace-nowrap">{gw.last_seen ? formatDateTime(gw.last_seen) : '—'}</td>
-                    <td className="px-2 py-2"></td>
+                    <td className="px-2 py-2">
+                      <button onClick={() => setHistoryAddr('gw:' + gw.gateway_id)} className="text-slate-400 hover:text-purple-400 p-1"><ChartIcon size={14} /></button>
+                    </td>
                   </tr>
                 ))}
 
@@ -153,16 +154,38 @@ export default function Devices() {
 
 
 function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: () => void }) {
+  const todayStr = new Date().toLocaleDateString('en-CA')
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr)
+
+  const { data: daysData } = useQuery<{ days: string[] }>({
+    queryKey: ['device-available-days', devAddr],
+    queryFn: () => api.get(`/lora/devices/${devAddr}/available-days`).then(r => r.data),
+  })
+  const availableDays = daysData?.days ?? []
+
   const { data, isLoading } = useQuery<{ points: Record<string, any>[] }>({
-    queryKey: ['device-sensor-history', devAddr],
-    queryFn: () => api.get(`/lora/devices/${devAddr}/sensor-history`, { params: { limit: 100 } }).then(r => r.data),
+    queryKey: ['device-sensor-history', devAddr, selectedDate],
+    queryFn: () => api.get(`/lora/devices/${devAddr}/sensor-history`, {
+      params: selectedDate ? { date: selectedDate } : { limit: 500 },
+    }).then(r => r.data),
   })
 
   const points = data?.points ?? []
   const hasTemp = points.some(p => p.t != null)
   const hasHum  = points.some(p => p.h != null)
   const hasBat  = points.some(p => p.b != null)
-  const hasGps  = points.some(p => p.lt != null)
+  const gpsPoints = points.filter(p => p.lt != null)
+
+  const goPrevDay = () => {
+    const d = new Date(selectedDate + 'T00:00:00')
+    d.setDate(d.getDate() - 1)
+    setSelectedDate(d.toLocaleDateString('en-CA'))
+  }
+  const goNextDay = () => {
+    const d = new Date(selectedDate + 'T00:00:00')
+    d.setDate(d.getDate() + 1)
+    if (d <= new Date()) setSelectedDate(d.toLocaleDateString('en-CA'))
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -175,69 +198,103 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
           <button onClick={onClose} className="text-slate-400 hover:text-white p-1"><X size={18} /></button>
         </div>
 
+        {/* Selector de dia */}
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <button onClick={goPrevDay} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-surface-800"><ChevronLeft size={18} /></button>
+          <input
+            type="date"
+            value={selectedDate}
+            max={todayStr}
+            onChange={e => setSelectedDate(e.target.value)}
+            className="bg-surface-800 border border-surface-700 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-brand-500"
+          />
+          <button onClick={goNextDay} disabled={selectedDate >= todayStr} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-surface-800 disabled:opacity-30"><ChevronRight size={18} /></button>
+          {availableDays.length > 0 && (
+            <select
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="bg-surface-800 border border-surface-700 rounded-lg px-2 py-1.5 text-xs text-slate-400 focus:outline-none"
+            >
+              {availableDays.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          )}
+        </div>
+
         {isLoading ? (
           <div className="h-64 flex items-center justify-center text-slate-500">Cargando...</div>
         ) : points.length === 0 ? (
-          <div className="h-64 flex items-center justify-center text-slate-500">Sin datos historicos</div>
+          <div className="h-64 flex items-center justify-center text-slate-500">Sin datos para {selectedDate}</div>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
+            {/* Temperatura */}
             {hasTemp && (
               <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-2 flex items-center gap-1"><Thermometer size={12} /> Temperatura (°C)</p>
-                <ResponsiveContainer width="100%" height={140}>
+                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
+                  <Thermometer size={12} className="text-amber-400" /> Temperatura (°C)
+                </p>
+                <ResponsiveContainer width="100%" height={120}>
                   <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
-                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={['auto', 'auto']} />
-                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                    <Line type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={['auto', 'auto']} />
+                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
+                    <Line type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} name="Temp" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
+            {/* Humedad */}
             {hasHum && (
               <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-2 flex items-center gap-1"><Droplet size={12} /> Humedad (%)</p>
-                <ResponsiveContainer width="100%" height={140}>
+                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
+                  <Droplet size={12} className="text-cyan-400" /> Humedad (%)
+                </p>
+                <ResponsiveContainer width="100%" height={120}>
                   <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
-                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={[0, 100]} />
-                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                    <Line type="monotone" dataKey="h" stroke="#06b6d4" strokeWidth={2} dot={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
+                    <Line type="monotone" dataKey="h" stroke="#06b6d4" strokeWidth={2} dot={false} name="Hum" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
+            {/* Bateria */}
             {hasBat && (
               <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-2 flex items-center gap-1"><Activity size={12} /> Bateria (%)</p>
-                <ResponsiveContainer width="100%" height={140}>
+                <p className="text-xs text-slate-400 mb-1 flex items-center gap-1">
+                  <Activity size={12} className="text-green-400" /> Bateria (%)
+                </p>
+                <ResponsiveContainer width="100%" height={120}>
                   <LineChart data={points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
-                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={[0, 100]} />
-                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
-                    <Line type="monotone" dataKey="b" stroke="#22c55e" strokeWidth={2} dot={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} />
+                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
+                    <Line type="monotone" dataKey="b" stroke="#22c55e" strokeWidth={2} dot={false} name="Bat" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )}
-            {hasGps && (
+            {/* GPS solo movimiento */}
+            {gpsPoints.length > 0 && (
               <div className="card p-3">
-                <p className="text-xs text-slate-400 mb-2 flex items-center gap-1"><MapPin size={12} /> GPS (ultimos 5)</p>
-                <div className="space-y-1">
-                  {points.filter(p => p.lt != null).slice(-5).reverse().map((p, i) => (
+                <p className="text-xs text-slate-400 mb-2 flex items-center gap-1">
+                  <MapPin size={12} className="text-field" /> GPS — movimientos ({gpsPoints.length} puntos)
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-32 overflow-auto">
+                  {gpsPoints.map((p, i) => (
                     <div key={i} className="flex items-center gap-2 text-xs text-slate-300 font-mono">
-                      <MapPin size={11} className="text-field" />
-                      {p.lt?.toFixed(5)}, {p.ln?.toFixed(5)}
                       <span className="text-slate-500">{p.ts?.substring(11, 16)}</span>
+                      <MapPin size={10} className="text-field shrink-0" />
+                      {p.lt?.toFixed(5)}, {p.ln?.toFixed(5)}
                     </div>
                   ))}
                 </div>
               </div>
             )}
-            <p className="text-[10px] text-slate-500 text-center">{points.length} muestras</p>
+            <p className="text-[10px] text-slate-500 text-center">{points.length} muestras · agregacion cada ~10 min</p>
           </div>
         )}
       </div>
