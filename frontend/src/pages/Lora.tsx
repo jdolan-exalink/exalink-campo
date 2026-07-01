@@ -10,7 +10,7 @@ import {
 import toast from 'react-hot-toast'
 import api from '@/lib/api'
 import type { LoraPacketResponse, LoraStats, LoraConfig, LoraPacket, LoraGateway, LoraDevice, LoraPendingGateway, LoraPendingDevice } from '@/types'
-import { formatDateTime, cn } from '@/lib/utils'
+import { formatDateTime, cn, tempMin, tempMax } from '@/lib/utils'
 import Header from '@/components/layout/Header'
 
 type Tab = 'reader' | 'gateways' | 'devices' | 'config'
@@ -964,7 +964,7 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
                   <LineChart data={points}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} tickFormatter={(v: string) => v?.substring(11, 16)} />
-                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={['auto', 'auto']} />
+                    <YAxis tick={{ fontSize: 10, fill: '#6b7280' }} domain={[tempMin, tempMax]} />
                     <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} />
                     <Line type="monotone" dataKey="t" stroke="#f59e0b" strokeWidth={2} dot={false} />
                   </LineChart>

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import api from '@/lib/api'
 import type { LoraDevice, LoraGateway } from '@/types'
-import { formatDateTime, cn } from '@/lib/utils'
+import { formatDateTime, cn, tempMin, tempMax } from '@/lib/utils'
 import Header from '@/components/layout/Header'
 
 export default function Devices() {
@@ -214,7 +214,7 @@ function DeviceHistoryModal({ devAddr, onClose }: { devAddr: string; onClose: ()
                 <LineChart data={points}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#475569' }} tickFormatter={(v: string) => v?.substring(11, 16)} interval="preserveStartEnd" />
-                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#475569' }} domain={['auto', 'auto']} label={{ value: '°C', angle: -90, position: 'insideLeft', fill: '#f59e0b', fontSize: 11 }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#475569' }} domain={[tempMin, tempMax]} label={{ value: '°C', angle: -90, position: 'insideLeft', fill: '#f59e0b', fontSize: 11 }} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#475569' }} domain={[0, 100]} label={{ value: '%', angle: 90, position: 'insideRight', fill: '#475569', fontSize: 11 }} />
                   <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }} labelFormatter={(v: string) => v?.substring(11, 16)} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />

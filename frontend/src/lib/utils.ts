@@ -6,6 +6,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+export function tempMin(dataMin: number, defaultsLow = -10, padding = 2): number {
+  if (Number.isNaN(dataMin)) return defaultsLow
+  return dataMin < defaultsLow ? dataMin - padding : defaultsLow
+}
+
+export function tempMax(dataMax: number, defaultsHigh = 50, padding = 2): number {
+  if (Number.isNaN(dataMax)) return defaultsHigh
+  return dataMax > defaultsHigh ? dataMax + padding : defaultsHigh
+}
+
 export function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—'
   return new Date(dateStr).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
